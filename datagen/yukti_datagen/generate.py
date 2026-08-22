@@ -138,8 +138,15 @@ def _sr_for(
     forced_code: str | None = None
 
     # Funds-sensitive rails track the salary cycle.
+    #
+    # The swing is deliberately large (~0.70x mid-month against 1.0x just after
+    # salary credit). An earlier version used a 15% swing, which left the
+    # learned day-of-month curve almost flat (0.97-1.07) and inconsistent with
+    # the outcome oracle, where retry timing quality spans 3x. Insufficient-
+    # funds failures really are far more common mid-month, and the model has to
+    # be able to see that in the data it is fitted on.
     if rail.is_mandate or rail in (Rail.NETBANKING, Rail.WALLET):
-        sr *= 0.80 + 0.20 * min(1.0, balance_availability(ts.day) / 1.35)
+        sr *= 0.55 + 0.45 * min(1.0, balance_availability(ts.day) / 1.35)
 
     if is_weekend(ts.date()):
         sr *= 0.985

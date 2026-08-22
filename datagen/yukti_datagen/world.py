@@ -50,7 +50,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         kinds=(ObligationKind.SUBSCRIPTION_CYCLE, ObligationKind.CART),
         rails=((Rail.UPI_AUTOPAY, 0.55), (Rail.CARD_RECURRING, 0.30), (Rail.ENACH, 0.15)),
         amount_range=(29_900, 89_900), mdr_bps=200,
-        daily_obligations=140, contact_budget_per_day=90,
+        daily_obligations=840, contact_budget_per_day=90,
         discount_budget_paise_per_day=1_50_000,
     ),
     MerchantSpec(
@@ -59,7 +59,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         rails=((Rail.UPI_INTENT, 0.35), (Rail.CARD, 0.25), (Rail.UPI_AUTOPAY, 0.25),
                (Rail.NETBANKING, 0.15)),
         amount_range=(4_99_000, 24_99_000), mdr_bps=180,
-        daily_obligations=90, contact_budget_per_day=70,
+        daily_obligations=540, contact_budget_per_day=70,
         discount_budget_paise_per_day=8_00_000,
     ),
     MerchantSpec(
@@ -67,7 +67,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         kinds=(ObligationKind.SUBSCRIPTION_CYCLE, ObligationKind.INVOICE),
         rails=((Rail.CARD_RECURRING, 0.45), (Rail.ENACH, 0.35), (Rail.UPI_AUTOPAY, 0.20)),
         amount_range=(1_49_900, 9_99_900), mdr_bps=220,
-        daily_obligations=70, contact_budget_per_day=50,
+        daily_obligations=420, contact_budget_per_day=50,
         discount_budget_paise_per_day=3_00_000,
     ),
     MerchantSpec(
@@ -75,7 +75,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         kinds=(ObligationKind.SUBSCRIPTION_CYCLE,),
         rails=((Rail.ENACH, 0.60), (Rail.UPI_AUTOPAY, 0.40)),
         amount_range=(2_50_000, 45_00_000), mdr_bps=90,
-        daily_obligations=110, contact_budget_per_day=100,
+        daily_obligations=660, contact_budget_per_day=100,
         discount_budget_paise_per_day=0,   # lenders do not discount principal
     ),
     MerchantSpec(
@@ -84,7 +84,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         rails=((Rail.UPI_INTENT, 0.45), (Rail.UPI_COLLECT, 0.15), (Rail.CARD, 0.25),
                (Rail.WALLET, 0.15)),
         amount_range=(39_900, 7_99_900), mdr_bps=210,
-        daily_obligations=200, contact_budget_per_day=150,
+        daily_obligations=1200, contact_budget_per_day=150,
         discount_budget_paise_per_day=6_00_000,
     ),
     MerchantSpec(
@@ -94,7 +94,7 @@ MERCHANTS: tuple[MerchantSpec, ...] = (
         kinds=(ObligationKind.INVOICE,),
         rails=((Rail.NETBANKING, 0.45), (Rail.ENACH, 0.35), (Rail.UPI_INTENT, 0.20)),
         amount_range=(25_00_000, 4_00_00_000), mdr_bps=60,
-        daily_obligations=25, contact_budget_per_day=25,
+        daily_obligations=150, contact_budget_per_day=25,
         discount_budget_paise_per_day=0,   # B2B negotiates terms, not discounts
     ),
 )
