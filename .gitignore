@@ -27,3 +27,6 @@ edge/bin/
 # Env / secrets
 .env
 .env.local
+
+# Go build output
+edge/bin/
