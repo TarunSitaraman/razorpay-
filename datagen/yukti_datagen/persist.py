@@ -47,11 +47,18 @@ def to_postgres(ds: Dataset) -> dict[str, int]:
 
         customers = [
             (c.id, c.merchant_id, c.ltv_band, c.tenure_days,
-             __import__("json").dumps(c.consent), c.archetype.value)
+             __import__("json").dumps(c.consent), c.archetype.value,
+             c.history.prior_payments, c.history.prior_failures,
+             c.history.prior_contacts, c.history.prior_contact_responses,
+             c.history.prior_optouts, c.history.days_since_last_payment,
+             c.preferred_channel.value)
             for m in ds.merchants for c in m.customers
         ]
         _copy(cur, "customer",
-              ["id", "merchant_id", "ltv_band", "tenure_days", "consent", "archetype"],
+              ["id", "merchant_id", "ltv_band", "tenure_days", "consent", "archetype",
+               "prior_payments", "prior_failures", "prior_contacts",
+               "prior_contact_responses", "prior_optouts", "days_since_last_payment",
+               "preferred_channel"],
               customers)
         counts["customer"] = len(customers)
 

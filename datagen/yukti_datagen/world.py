@@ -113,6 +113,8 @@ class Customer:
     # A small cohort learns that abandoning produces a discount. Detecting them
     # is a policy-engine concern; generating them is this file's concern.
     discount_farmer: bool = False
+    # Observable prior behaviour. A legitimate feature source, unlike archetype.
+    history: CustomerHistory | None = None
     opted_out_at: datetime | None = None
     # Rolling contact log, used to compute trailing-7d fatigue during generation.
     contact_log: list[datetime] = field(default_factory=list)
@@ -134,13 +136,151 @@ def _weighted(rng: random.Random, options: dict | tuple):
     return items[-1][0]
 
 
+# How archetype depends on observable history.
+#
+# This conditioning is the difference between a learnable dataset and an
+# unlearnable one. An earlier version drew archetype independently of every
+# observable, which made expected uplift identical across archetypes once you
+# condition on features — no model, however good, could separate a sleeping dog
+# from a sure thing. It would still have learned the *situational* half of
+# uplift (suppress during downtime, skip permanent declines, respect fatigue)
+# and probably cleared a naive AUUC gate, which is worse than failing: the
+# headline claim would have been provably unlearnable while the metric looked
+# fine.
+#
+# The conditioning is also simply true. Someone with long tenure and a clean
+# payment history usually pays anyway; someone who has opted out before resents
+# being chased; someone with many failures and no recoveries is gone.
+#
+# Weights are relative, normalised per row. Read a row as "given this history,
+# how plausible is each archetype".
+ARCHETYPE_GIVEN_HISTORY: dict[str, dict[UpliftArchetype, float]] = {
+    # Relative weights, normalised per row. Read a row as "given this history,
+    # how plausible is each archetype".
+    #
+    # The SHAPE of each row is the domain story. The overall level of each
+    # column was then fitted by iterative proportional fitting so that the
+    # marginal mix still lands on the ARCHETYPE_MIX targets — conditioning on
+    # history must not silently change how many sleeping dogs exist in the
+    # world, only which customers they are. Before fitting, persuadables came
+    # out at 36.8% against a 25% target.
+    "loyal_clean": {
+        UpliftArchetype.SURE_THING: 5.019,
+        UpliftArchetype.PERSUADABLE: 1.018,
+        UpliftArchetype.LOST_CAUSE: 0.600,
+        UpliftArchetype.SLEEPING_DOG: 1.018,
+    },
+    "engaged_responsive": {
+        UpliftArchetype.SURE_THING: 1.255,
+        UpliftArchetype.PERSUADABLE: 3.053,
+        UpliftArchetype.LOST_CAUSE: 1.000,
+        UpliftArchetype.SLEEPING_DOG: 0.582,
+    },
+    "dormant_failing": {
+        UpliftArchetype.SURE_THING: 0.418,
+        UpliftArchetype.PERSUADABLE: 0.611,
+        UpliftArchetype.LOST_CAUSE: 6.500,
+        UpliftArchetype.SLEEPING_DOG: 0.582,
+    },
+    "annoyed_withdrawn": {
+        UpliftArchetype.SURE_THING: 1.004,
+        UpliftArchetype.PERSUADABLE: 0.407,
+        UpliftArchetype.LOST_CAUSE: 1.200,
+        UpliftArchetype.SLEEPING_DOG: 4.727,
+    },
+    "unremarkable": {
+        UpliftArchetype.SURE_THING: 2.007,
+        UpliftArchetype.PERSUADABLE: 1.119,
+        UpliftArchetype.LOST_CAUSE: 2.600,
+        UpliftArchetype.SLEEPING_DOG: 0.873,
+    },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CustomerHistory:
+    """Observable prior behaviour. Every field here is a legitimate feature.
+
+    Generated BEFORE the archetype, which is then drawn conditioned on it. The
+    causal story runs history -> latent disposition, which is the direction that
+    makes the disposition inferable.
+    """
+
+    tenure_days: int
+    ltv_band: str
+    prior_payments: int
+    prior_failures: int
+    prior_contacts: int
+    prior_contact_responses: int
+    prior_optouts: int
+    days_since_last_payment: int
+
+    @property
+    def profile(self) -> str:
+        """Bucket the history into one of the conditioning rows.
+
+        Deliberately coarse. The model has to work from the raw fields, not from
+        this label — the label exists only to shape the draw.
+        """
+        if self.prior_optouts > 0:
+            return "annoyed_withdrawn"
+        if self.prior_failures >= 3 and self.prior_payments == 0:
+            return "dormant_failing"
+        if self.days_since_last_payment > 180 and self.prior_payments <= 1:
+            return "dormant_failing"
+        if self.tenure_days > 400 and self.prior_payments >= 6 and self.prior_failures <= 1:
+            return "loyal_clean"
+        if self.prior_contact_responses >= 1:
+            return "engaged_responsive"
+        return "unremarkable"
+
+
+def build_history(rng: random.Random, spec: MerchantSpec) -> CustomerHistory:
+    """Draw an observable customer history."""
+    tenure = int(rng.betavariate(1.6, 2.4) * 900) + 1
+    # Longer-tenured customers have simply had more chances to pay.
+    prior_payments = rng.randint(0, max(1, tenure // 45))
+    prior_failures = min(
+        rng.randint(0, 6), rng.randint(0, max(1, 8 - prior_payments))
+    )
+    prior_contacts = rng.randint(0, 5)
+    prior_responses = sum(1 for _ in range(prior_contacts) if rng.random() < 0.30)
+    # Opt-outs are rare, and much likelier once someone has been contacted a lot.
+    p_optout = 0.02 + 0.05 * max(0, prior_contacts - 2)
+    prior_optouts = 1 if rng.random() < p_optout else 0
+
+    ltv = "high" if prior_payments >= 8 else "mid" if prior_payments >= 3 else "low"
+    if rng.random() < 0.18:   # some noise, so LTV is not a deterministic readout
+        ltv = _weighted(rng, {"low": 0.5, "mid": 0.35, "high": 0.15})
+
+    days_since_payment = (
+        rng.randint(1, 45) if prior_payments else rng.randint(60, 400)
+    )
+    return CustomerHistory(
+        tenure_days=tenure,
+        ltv_band=ltv,
+        prior_payments=prior_payments,
+        prior_failures=prior_failures,
+        prior_contacts=prior_contacts,
+        prior_contact_responses=prior_responses,
+        prior_optouts=prior_optouts,
+        days_since_last_payment=days_since_payment,
+    )
+
+
 def build_customers(
     rng: random.Random, merchant_db_id: str, spec: MerchantSpec, n: int
 ) -> list[Customer]:
-    """Populate a merchant's customer base with ground-truth archetypes."""
+    """Populate a merchant's customer base.
+
+    History first, then archetype conditioned on it — so the latent disposition
+    is inferable from observable behaviour rather than being independent noise.
+    """
     out: list[Customer] = []
     for _ in range(n):
-        archetype = _weighted(rng, ARCHETYPE_MIX)
+        history = build_history(rng, spec)
+        archetype = _weighted(rng, ARCHETYPE_GIVEN_HISTORY[history.profile])
+
         # B2B buyers are institutional: they neither farm discounts nor sulk.
         if spec.segment == "b2b_services" and archetype is UpliftArchetype.SLEEPING_DOG:
             archetype = UpliftArchetype.PERSUADABLE
@@ -156,8 +296,8 @@ def build_customers(
                 id=customer_id(),
                 merchant_id=merchant_db_id,
                 archetype=archetype,
-                ltv_band=_weighted(rng, {"low": 0.5, "mid": 0.35, "high": 0.15}),
-                tenure_days=rng.randint(1, 900),
+                ltv_band=history.ltv_band,
+                tenure_days=history.tenure_days,
                 preferred_channel=channel,
                 consent={
                     # Consent is per channel under DPDP. Not everyone grants it,
@@ -169,6 +309,10 @@ def build_customers(
                 },
                 issuer=rng.choice(ISSUERS),
                 discount_farmer=rng.random() < 0.03,
+                history=history,
+                # Someone who has already opted out stays opted out. The policy
+                # engine must honour this globally, across every agent.
+                opted_out_at=None,
             )
         )
     return out
