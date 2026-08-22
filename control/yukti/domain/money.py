@@ -39,6 +39,10 @@ def format_inr(paise: int) -> str:
     Indian digit grouping is 3 then 2s (lakh/crore), not 3s, and merchant-facing
     numbers in the console are read by people who will notice if it is wrong.
     """
+    # Coerced explicitly: Postgres sum(bigint) returns numeric, so a Decimal
+    # can reach here from any aggregate query that forgets to cast. A display
+    # helper should not be the thing that 500s a dashboard.
+    paise = int(paise)
     sign = "-" if paise < 0 else ""
     whole, frac = divmod(abs(paise), PAISE_PER_RUPEE)
     s = str(whole)

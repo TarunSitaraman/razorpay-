@@ -158,3 +158,18 @@ class TestDeclineTaxonomy:
             # Messaging a customer during issuer downtime burns a contact and
             # tells them the merchant is broken. The correct action is to wait.
             assert not spec.customer_actionable
+
+
+class TestFormatInrIsRobust:
+    """Regression: Postgres sum(bigint) returns numeric, so aggregate queries
+    hand back Decimal. format_inr is a display helper reached from every
+    dashboard endpoint and must not be what takes the console down."""
+
+    def test_accepts_decimal_from_a_sql_aggregate(self):
+        from decimal import Decimal
+
+        assert money.format_inr(Decimal("123456789")) == "₹12,34,567.89"
+
+    def test_accepts_bool_and_plain_int(self):
+        assert money.format_inr(0) == "₹0.00"
+        assert money.format_inr(True) == "₹0.01"

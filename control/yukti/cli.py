@@ -37,5 +37,21 @@ def consume(
     run(group_id=group, max_events=max_events)
 
 
+@app.command()
+def serve(
+    port: int = typer.Option(None, help="Port to bind"),
+    reload: bool = typer.Option(False, help="Auto-reload on code change"),
+) -> None:
+    """Run the merchant console API."""
+    import uvicorn
+
+    from yukti.config import settings
+
+    uvicorn.run(
+        "yukti.api.main:app", host="0.0.0.0",
+        port=port or settings().api_port, reload=reload, log_level="info",
+    )
+
+
 if __name__ == "__main__":
     app()
