@@ -51,14 +51,16 @@ def to_postgres(ds: Dataset) -> dict[str, int]:
              c.history.prior_payments, c.history.prior_failures,
              c.history.prior_contacts, c.history.prior_contact_responses,
              c.history.prior_optouts, c.history.days_since_last_payment,
-             c.preferred_channel.value)
+             c.preferred_channel.value,
+             c.history.prior_unprompted_payments, c.history.prior_prompted_payments)
             for m in ds.merchants for c in m.customers
         ]
         _copy(cur, "customer",
               ["id", "merchant_id", "ltv_band", "tenure_days", "consent", "archetype",
                "prior_payments", "prior_failures", "prior_contacts",
                "prior_contact_responses", "prior_optouts", "days_since_last_payment",
-               "preferred_channel"],
+               "preferred_channel", "prior_unprompted_payments",
+               "prior_prompted_payments"],
               customers)
         counts["customer"] = len(customers)
 
