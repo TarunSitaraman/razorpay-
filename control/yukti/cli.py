@@ -26,5 +26,16 @@ def reset_db(
     db.migrate()
 
 
+@app.command()
+def consume(
+    group: str = typer.Option("yukti-opportunity", help="Kafka consumer group"),
+    max_events: int = typer.Option(0, help="Stop after N events (0 = until idle)"),
+) -> None:
+    """Consume payment events and form recovery opportunities."""
+    from yukti.opportunity.consumer import run
+
+    run(group_id=group, max_events=max_events)
+
+
 if __name__ == "__main__":
     app()

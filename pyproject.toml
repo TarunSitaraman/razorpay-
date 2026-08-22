@@ -52,3 +52,6 @@ testpaths = ["tests"]
 pythonpath = ["control", "datagen", "sandbox"]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "integration: requires the local stack (make up)",
+]
