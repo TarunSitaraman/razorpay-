@@ -59,5 +59,17 @@ def replay(
     _replay(speed=speed, limit=limit)
 
 
+@app.command("replay-webhooks")
+def replay_webhooks_cmd(
+    sandbox: str = typer.Option("http://localhost:8081", help="Sandbox base URL"),
+    speed: float = typer.Option(0.0, help="Replay speed multiplier (0 = as fast as possible)"),
+    limit: int = typer.Option(0, help="Stop after N events (0 = all)"),
+) -> None:
+    """Replay through the sandbox as signed webhooks (sandbox -> edge -> Kafka)."""
+    from yukti_datagen.replay_webhooks import replay_webhooks
+
+    replay_webhooks(sandbox_url=sandbox, speed=speed, limit=limit)
+
+
 if __name__ == "__main__":
     app()

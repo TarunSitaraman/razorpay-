@@ -53,5 +53,28 @@ def serve(
     )
 
 
+@app.command()
+def outbox(
+    batch: int = typer.Option(500, help="Rows per batch"),
+    watch: bool = typer.Option(False, help="Keep draining until interrupted"),
+) -> None:
+    """Drain the transactional outbox to Kafka."""
+    import time as _time
+
+    from yukti.dispatch.outbox import OutboxRelay, pending_count
+    from yukti.store.db import connect
+
+    with connect() as conn:
+        relay = OutboxRelay(conn)
+        while True:
+            stats = relay.drain_all(batch_size=batch)
+            if stats.published or stats.failed:
+                typer.echo(f"  published={stats.published} failed={stats.failed} "
+                           f"pending={pending_count(conn)}")
+            if not watch:
+                break
+            _time.sleep(1.0)
+
+
 if __name__ == "__main__":
     app()

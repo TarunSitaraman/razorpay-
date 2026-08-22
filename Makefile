@@ -10,7 +10,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help up down status reset venv install migrate seed replay eval demo test lint fmt clean
+.PHONY: help up down status reset venv install migrate seed replay replay-webhooks edge services services-down outbox eval demo test lint fmt clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -42,8 +42,27 @@ migrate: ## Apply database migrations
 seed: ## Generate synthetic data (fixed seed — reproducible)
 	@$(PY) -m yukti_datagen.cli generate
 
-replay: ## Replay the synthetic event stream into Kafka
+replay: ## Replay the event log straight into Kafka (fast path, used by eval)
 	@$(PY) -m yukti_datagen.cli replay
+
+replay-webhooks: ## Replay via sandbox -> ingest-gw -> Kafka (realistic path, used by demo)
+	@$(PY) -m yukti_datagen.cli replay-webhooks
+
+edge: ## Build the Go edge binaries
+	@cd edge && CGO_ENABLED=0 go build -o bin/ingest-gw ./cmd/ingest-gw
+	@echo "  ok   edge/bin/ingest-gw"
+
+services: edge ## Start ingest-gw, sandbox and console API
+	@./scripts/local/services.sh up
+
+services-down: ## Stop ingest-gw, sandbox and console API
+	@./scripts/local/services.sh down
+
+consume: ## Consume payment events into recovery cases
+	@$(PY) -m yukti.cli consume
+
+outbox: ## Drain the transactional outbox to Kafka
+	@$(PY) -m yukti.cli outbox
 
 eval: ## Run all baseline arms and emit the lift report
 	@$(PY) -m yukti.eval.cli run
