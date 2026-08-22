@@ -12,14 +12,38 @@ import json
 import signal
 from typing import Any
 
-from confluent_kafka import Consumer, KafkaError, KafkaException
+from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
 from rich.console import Console
 
 from yukti.config import settings
-from yukti.opportunity.service import IngestResult, OpportunityService
+from yukti.opportunity.service import IngestResult, MalformedEvent, OpportunityService
 from yukti.store.db import connect
 
 console = Console()
+
+
+def build_dlq_producer() -> Producer:
+    return Producer({
+        "bootstrap.servers": settings().kafka_bootstrap,
+        "enable.idempotence": True,
+        "acks": "all",
+    })
+
+
+def to_dlq(producer: Producer, raw: bytes, reason: str, topic: str) -> None:
+    """Quarantine a message that can never succeed.
+
+    Retrying a structurally invalid event fails identically forever and blocks
+    every message behind it on that partition — one poison record would stall a
+    merchant's entire stream. The DLQ keeps the partition moving and preserves
+    the payload for inspection.
+    """
+    producer.produce(
+        topic=topic,
+        value=raw,
+        headers=[("dlq_reason", reason.encode()[:512])],
+    )
+    producer.flush(10)
 
 
 def build_consumer(group_id: str = "yukti-opportunity") -> Consumer:
@@ -58,6 +82,8 @@ def run(
     processed = 0
     idle = 0.0
 
+    dlq = build_dlq_producer()
+
     with connect() as conn:
         svc = OpportunityService(conn)
         try:
@@ -74,8 +100,18 @@ def run(
                     raise KafkaException(msg.error())
 
                 idle = 0.0
-                event = json.loads(msg.value())
-                totals = totals + svc.ingest(event)
+                raw = msg.value()
+                try:
+                    event = json.loads(raw)
+                    totals = totals + svc.ingest(event)
+                except (MalformedEvent, json.JSONDecodeError, KeyError) as exc:
+                    # Quarantine and keep going. A consumer that dies on one bad
+                    # record turns a single malformed event into an outage for
+                    # every merchant sharing that partition.
+                    conn.rollback()
+                    to_dlq(dlq, raw, f"{type(exc).__name__}: {exc}", cfg.topic_dlq)
+                    totals = totals + IngestResult(malformed=1)
+
                 conn.commit()
                 consumer.commit(msg, asynchronous=False)
 
@@ -92,6 +128,7 @@ def run(
             f"  [bold]{processed:,}[/] events -> "
             f"opened=[green]{totals.opened:,}[/] resolved=[cyan]{totals.resolved:,}[/] "
             f"duplicate=[yellow]{totals.duplicate:,}[/] "
-            f"superseded=[yellow]{totals.superseded:,}[/] ignored={totals.ignored:,}"
+            f"superseded=[yellow]{totals.superseded:,}[/] "
+            f"malformed=[red]{totals.malformed:,}[/] ignored={totals.ignored:,}"
         )
     return totals

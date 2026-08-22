@@ -15,8 +15,11 @@ possible at all.
 from __future__ import annotations
 
 import random
-from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from yukti.domain.enums import ObligationKind, Rail
+from yukti.domain.ids import attempt_id, event_id, obligation_id
 
 from yukti_datagen.calendar import (
     DegradationEpisode,
@@ -27,9 +30,6 @@ from yukti_datagen.calendar import (
     is_weekend,
 )
 from yukti_datagen.world import ISSUERS, PSPS, Merchant, MerchantSpec, _weighted, build_world
-
-from yukti.domain.enums import ObligationKind, Rail
-from yukti.domain.ids import attempt_id, event_id, obligation_id
 
 # Base per-rail success rate before any environment effect. UPI intent
 # meaningfully outperforms UPI collect, which is a real and well-documented

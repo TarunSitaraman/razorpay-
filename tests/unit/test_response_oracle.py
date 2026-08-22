@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-
+from yukti.domain.enums import ActionKind, Channel, UpliftArchetype
 from yukti_datagen.response import (
     MAX_UPLIFT,
     ORGANIC_RECOVERY,
@@ -20,8 +20,6 @@ from yukti_datagen.response import (
     Intervention,
     evaluate,
 )
-
-from yukti.domain.enums import ActionKind, Channel, UpliftArchetype
 
 AT = datetime(2026, 5, 3, 19, 0)   # day 3 = post-salary, 19:00 = peak receptivity
 SEED = 20260822

@@ -7,10 +7,9 @@ from dataclasses import asdict
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from yukti.store.db import connect
 
 from yukti_datagen.generate import Dataset
-
-from yukti.store.db import connect
 
 DATA_DIR = pathlib.Path("data/generated")
 
@@ -89,8 +88,9 @@ def to_postgres(ds: Dataset) -> dict[str, int]:
         counts["budget_ledger"] = len(ledger)
 
         # Ground-truth degradation episodes, so the detector can be scored.
-        from yukti.domain.ids import degradation_id
         import json
+
+        from yukti.domain.ids import degradation_id
         _copy(cur, "degradation_signal",
               ["id", "dimension", "dimension_value", "baseline_sr", "observed_sr",
                "z_score", "sample_size", "window_start", "window_end", "state",

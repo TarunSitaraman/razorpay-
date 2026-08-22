@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from yukti.dispatch.outbox import OutboxRelay, enqueue, pending_count
 
 pytestmark = pytest.mark.integration

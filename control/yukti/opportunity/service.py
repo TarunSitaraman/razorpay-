@@ -16,7 +16,6 @@ trusted on their own.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -25,9 +24,9 @@ import psycopg
 import redis
 
 from yukti.config import settings
-from yukti.domain.enums import Arm, CaseState, ObligationKind
+from yukti.domain.enums import Arm, CaseState
 from yukti.domain.fsm import check_version
-from yukti.domain.ids import case_id, trace_id
+from yukti.domain.ids import case_id
 
 # Events that create or advance a recovery opportunity. `payment.captured` is
 # consumed too, but it closes cases rather than opening them.
@@ -37,6 +36,23 @@ OPPORTUNITY_EVENTS = {
 RESOLUTION_EVENTS = {"payment.captured"}
 
 DEDUP_TTL_SECONDS = 7 * 24 * 3600
+
+# Namespaced to THIS stage. The Go edge dedups the same event ids under
+# `yukti:edge:evt:` and answers a different question — "has this webhook been
+# delivered to us?" versus this stage's "have we already formed an opportunity
+# from it?". Sharing a prefix lets the edge's key poison this check, which is
+# not a theoretical risk: it silently made the consumer classify all 8,775
+# events as duplicates and open zero cases.
+DEDUP_KEY_PREFIX = "yukti:opp:evt:"
+
+
+class MalformedEvent(ValueError):
+    """Event is structurally unusable and must be quarantined, not retried.
+
+    Distinct from a transient failure: retrying a message that is missing a
+    required field will fail identically forever, so it belongs in the DLQ
+    rather than blocking the partition behind it.
+    """
 
 
 @dataclass(slots=True)
@@ -48,6 +64,7 @@ class IngestResult:
     duplicate: int = 0
     superseded: int = 0
     ignored: int = 0
+    malformed: int = 0
 
     def __add__(self, other: IngestResult) -> IngestResult:
         return IngestResult(
@@ -56,7 +73,24 @@ class IngestResult:
             self.duplicate + other.duplicate,
             self.superseded + other.superseded,
             self.ignored + other.ignored,
+            self.malformed + other.malformed,
         )
+
+
+# Fields without which an opportunity event cannot be acted on at all.
+REQUIRED_FIELDS = ("merchant_id", "customer_id", "obligation_id", "ts")
+
+
+def validate(event: dict[str, Any]) -> None:
+    """Reject structurally unusable events before they touch the database.
+
+    The edge authenticates events; it deliberately does not understand them.
+    Validating shape here keeps that separation — the untrusted boundary proves
+    provenance, the control plane proves meaning.
+    """
+    missing = [f for f in REQUIRED_FIELDS if not event.get(f)]
+    if missing:
+        raise MalformedEvent(f"missing required field(s): {', '.join(missing)}")
 
 
 class OpportunityService:
@@ -69,7 +103,7 @@ class OpportunityService:
     def _seen_recently(self, event_id: str) -> bool:
         """Fast-path dedup. SET NX returns False when the key already existed."""
         try:
-            return not self.redis.set(f"yukti:evt:{event_id}", "1",
+            return not self.redis.set(f"{DEDUP_KEY_PREFIX}{event_id}", "1",
                                       nx=True, ex=DEDUP_TTL_SECONDS)
         except redis.RedisError:
             # Redis is a cache, not a source of truth. If it is unavailable we
@@ -99,6 +133,10 @@ class OpportunityService:
 
         if self._seen_recently(eid) or not self._record_durably(eid, "kafka"):
             return IngestResult(duplicate=1)
+
+        # Validate AFTER dedup so a redelivered malformed event is counted once
+        # rather than re-quarantined on every delivery.
+        validate(event)
 
         if etype in RESOLUTION_EVENTS:
             return self._resolve(event)

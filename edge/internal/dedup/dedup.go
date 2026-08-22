@@ -27,11 +27,22 @@ func NewRedis(addr string, ttl time.Duration) *RedisDeduper {
 	}
 }
 
+// KeyPrefix namespaces the edge's dedup keys.
+//
+// This MUST NOT collide with any other stage's dedup namespace. Yukti dedups at
+// two independent points — the edge (has this webhook been delivered to us?)
+// and the control plane (have we already formed an opportunity from it?) — and
+// they answer different questions about the same event id. Sharing a keyspace
+// makes the first stage's key poison the second, so the control plane sees the
+// key the edge just set and discards every event as a duplicate. That produced
+// a pipeline that ingested 8,775 events and opened zero cases.
+const KeyPrefix = "yukti:edge:evt:"
+
 // FirstSight uses SET NX EX: atomic test-and-set in one round trip, so two
 // concurrent deliveries of the same webhook cannot both observe "not seen".
 // A GET-then-SET would race.
 func (d *RedisDeduper) FirstSight(ctx context.Context, eventID string) (bool, error) {
-	return d.client.SetNX(ctx, "yukti:evt:"+eventID, 1, d.ttl).Result()
+	return d.client.SetNX(ctx, KeyPrefix+eventID, 1, d.ttl).Result()
 }
 
 func (d *RedisDeduper) Close() error { return d.client.Close() }

@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-
 from yukti.domain.enums import Arm, CaseState
 from yukti.opportunity.service import OpportunityService
 

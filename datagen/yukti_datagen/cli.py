@@ -7,11 +7,10 @@ import time
 import typer
 from rich.console import Console
 from rich.table import Table
+from yukti.config import settings
 
 from yukti_datagen import persist
 from yukti_datagen.generate import generate as _generate
-
-from yukti.config import settings
 
 app = typer.Typer(add_completion=False, help="Yukti synthetic data")
 console = Console()
@@ -33,7 +32,8 @@ def generate(
     path = persist.to_parquet(ds)
 
     t = Table(show_header=True, header_style="bold")
-    t.add_column("entity"); t.add_column("rows", justify="right")
+    t.add_column("entity")
+    t.add_column("rows", justify="right")
     for k, v in counts.items():
         t.add_row(k, f"{v:,}")
     t.add_row("[bold]events (parquet)", f"[bold]{len(ds.events):,}")

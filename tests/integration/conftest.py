@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from yukti.domain.ids import customer_id, merchant_id, obligation_id
 from yukti.store.db import connect
 

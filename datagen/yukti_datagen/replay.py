@@ -19,10 +19,9 @@ import pyarrow.parquet as pq
 from confluent_kafka import Producer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+from yukti.config import settings
 
 from yukti_datagen.persist import DATA_DIR
-
-from yukti.config import settings
 
 console = Console()
 

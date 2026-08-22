@@ -11,13 +11,11 @@ from decimal import Decimal
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-
 from yukti.domain import money
 from yukti.domain.decline import BY_CODE, lookup
 from yukti.domain.enums import (
     ActionKind,
     CaseState,
-    ObligationState,
     Transience,
 )
 from yukti.domain.fsm import (
