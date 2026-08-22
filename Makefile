@@ -10,7 +10,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help up down status reset venv install migrate seed replay replay-webhooks edge services services-down outbox eval demo test lint fmt clean
+.PHONY: help up down status reset venv install migrate seed history replay replay-webhooks edge services services-down outbox eval demo test lint fmt clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -41,6 +41,9 @@ migrate: ## Apply database migrations
 
 seed: ## Generate synthetic data (fixed seed — reproducible)
 	@$(PY) -m yukti_datagen.cli generate
+
+history: ## Generate the randomised exploration history (RCT for uplift training)
+	@$(PY) -m yukti_datagen.cli history
 
 replay: ## Replay the event log straight into Kafka (fast path, used by eval)
 	@$(PY) -m yukti_datagen.cli replay

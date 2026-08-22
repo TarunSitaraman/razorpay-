@@ -71,5 +71,19 @@ def replay_webhooks_cmd(
     replay_webhooks(sandbox_url=sandbox, speed=speed, limit=limit)
 
 
+@app.command()
+def history(days: int = typer.Option(14, help="Days the exploration period spans")) -> None:
+    """Generate the randomised exploration history (the RCT that identifies uplift)."""
+    from yukti_datagen.history_cli import build
+
+    stats = build(days=days)
+    console.print(
+        f"  cases [bold]{stats['cases']:,}[/]  "
+        f"treated [green]{stats['treated']:,}[/]  control [cyan]{stats['control']:,}[/]  "
+        f"recovered [bold]{stats['recovered']:,}[/]  "
+        f"opted-out [red]{stats['opted_out']:,}[/]"
+    )
+
+
 if __name__ == "__main__":
     app()
