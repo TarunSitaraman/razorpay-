@@ -1,0 +1,29 @@
+# Local infra: Kafka distribution, broker data, logs. Reproducible via scripts/local.
+.infra/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Generated synthetic data (regenerate with `make seed` — fixed seed, reproducible)
+data/generated/
+*.parquet
+*.duckdb
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Go
+edge/bin/
+
+# Env / secrets
+.env
+.env.local
