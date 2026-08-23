@@ -129,6 +129,11 @@ class CaseState(StrEnum):
     SCHEDULED = "scheduled"
     ACTING = "acting"
     AWAITING_OUTCOME = "awaiting_outcome"
+    # Held for a human. Distinct from STOPPED because the agent has not decided
+    # not to act — it has decided it is not the one who gets to decide. The
+    # money is still in play and the merchant still owes themselves an answer,
+    # which is a different line on the console from "we chose to walk away".
+    ESCALATED = "escalated"
     STOPPED = "stopped"
     RECOVERED = "recovered"
     LOST = "lost"

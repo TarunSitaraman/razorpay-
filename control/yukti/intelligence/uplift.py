@@ -281,3 +281,86 @@ def uplift_at_k(
     if t.sum() == 0 or (1 - t).sum() == 0:
         return 0.0
     return float(y[t == 1].mean() - y[t == 0].mean())
+
+
+class ActionConditionalUplift:
+    """Uplift as a function of the ACTION, not just of being treated.
+
+    `TLearner` and `XLearner` strip the action columns from both arms, for a
+    good reason: those columns are null for every control row, so a model that
+    keeps them can identify the arm from their absence and learn the assignment
+    instead of the customer. But the consequence is that they estimate a single
+    number per case — the effect of being treated by whatever mix the
+    exploration policy happened to use — and the allocator then has nothing to
+    choose between a WhatsApp message and a Rs 9 voice call except cost.
+
+    That is the wrong question to leave unanswered, because choosing the
+    intervention IS the product.
+
+    The fix exploits an asymmetry the earlier models did not. Within the treated
+    arm the action was drawn by `sample_intervention`, which takes only (rng, at)
+    and never looks at the customer — so action is randomised *given* treatment,
+    and E[Y | X, A=a] is identified for every a. So:
+
+        mu_treated(X, a)   fitted on treated rows, action columns KEPT
+        mu_control(X)      fitted on control rows, action columns absent
+        tau(X, a)        = mu_treated(X, a) - mu_control(X)
+
+    The asymmetry is the point, not an oversight: the treated model may condition
+    on the action because the action varied randomly there; the control model
+    may not, because there is nothing to condition on. Keeping the columns in
+    the control model is the leak; keeping them in the treated model is the
+    estimate.
+
+    What this cannot do is estimate an effect for an action the exploration
+    period never sampled. `EXPLORE_ACTIONS` covers all six actionable kinds, so
+    every action the planner can propose has support — but a new channel added
+    later would need exploration before this model could price it.
+    """
+
+    # Columns describing the intervention. Kept by the treated model, stripped
+    # from the control model.
+    ACTION_COLUMNS: tuple[str, ...] = (
+        "action_kind", "action_channel", "cost_paise", "discount_paise",
+        "discount_pct",
+    )
+
+    def __init__(self, seed: int = 20260822) -> None:
+        self.seed = seed
+        self.mu_treated: lgb.LGBMClassifier | None = None
+        self.mu_control: lgb.LGBMClassifier | None = None
+        self.treated_columns: list[str] = []
+        self.control_columns: list[str] = []
+
+    @classmethod
+    def _strip(cls, X: pd.DataFrame) -> pd.DataFrame:
+        return X.drop(columns=[c for c in cls.ACTION_COLUMNS if c in X.columns])
+
+    def fit(self, frame: Frame) -> ActionConditionalUplift:
+        X = frame.X
+        t = frame.treated.to_numpy()
+        y = frame.outcome.to_numpy()
+
+        treated_X = X[t == 1]
+        control_X = self._strip(X[t == 0])
+        self.treated_columns = list(treated_X.columns)
+        self.control_columns = list(control_X.columns)
+
+        self.mu_treated = _booster(self.seed).fit(treated_X, y[t == 1])
+        self.mu_control = _booster(self.seed + 1).fit(control_X, y[t == 0])
+        return self
+
+    def predict(self, frame: Frame) -> UpliftScores:
+        """Score rows whose action columns describe a PROPOSED action.
+
+        At training time those columns describe what was done; at scoring time
+        they describe what we are considering doing. That substitution is the
+        counterfactual, and it is only valid because the action was randomised.
+        """
+        if self.mu_treated is None or self.mu_control is None:
+            raise RuntimeError("model is not fitted")
+
+        X = frame.X
+        p_t = self.mu_treated.predict_proba(X[self.treated_columns])[:, 1]
+        p_c = self.mu_control.predict_proba(self._strip(X)[self.control_columns])[:, 1]
+        return UpliftScores(uplift=p_t - p_c, p_treated=p_t, p_control=p_c)

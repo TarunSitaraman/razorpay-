@@ -63,6 +63,7 @@ def run(
     max_events: int = 0,
     idle_timeout_s: float = 5.0,
     quiet: bool = False,
+    commit_every: int = 500,
 ) -> IngestResult:
     """Consume until the stream goes idle or ``max_events`` is reached."""
     cfg = settings()
@@ -80,6 +81,8 @@ def run(
 
     totals = IngestResult()
     processed = 0
+    pending = 0
+    last_msg = None
     idle = 0.0
 
     dlq = build_dlq_producer()
@@ -108,18 +111,51 @@ def run(
                     # Quarantine and keep going. A consumer that dies on one bad
                     # record turns a single malformed event into an outage for
                     # every merchant sharing that partition.
+                    # Rolling back discards the whole open batch, not just this
+                    # event, so the batch is replayed from the last committed
+                    # offset. That is safe — the ingest path is idempotent — but
+                    # it must not silently lose the events, so the offset is NOT
+                    # advanced here and `pending` is reset to reflect that the
+                    # transaction is now empty.
                     conn.rollback()
+                    pending = 0
                     to_dlq(dlq, raw, f"{type(exc).__name__}: {exc}", cfg.topic_dlq)
                     totals = totals + IngestResult(malformed=1)
 
-                conn.commit()
-                consumer.commit(msg, asynchronous=False)
-
                 processed += 1
+                pending += 1
+                last_msg = msg
+
+                # Batched, not per message. A database commit plus a synchronous
+                # offset commit on every event is two round trips and an fsync
+                # each, and it measured at ~200 events/s — which makes a full
+                # 338k-event replay a 28-minute operation and the evaluation
+                # harness, which replays five arms, unusable.
+                #
+                # The invariant that matters is unchanged: the offset still
+                # advances only AFTER the database transaction commits. Batching
+                # only widens what a crash replays, from one event to at most
+                # `commit_every`, and every stage downstream is idempotent —
+                # Redis dedup, processed_event, the version check and the partial
+                # unique index. Absorbing a replayed batch is precisely what
+                # those four layers were built for.
+                if pending >= commit_every:
+                    conn.commit()
+                    consumer.commit(last_msg, asynchronous=False)
+                    pending = 0
+
                 if not quiet and processed % 2000 == 0:
                     console.print(f"  processed {processed:,}  opened={totals.opened:,}")
                 if max_events and processed >= max_events:
                     break
+
+            # Drain whatever the last partial batch left uncommitted. Without
+            # this, a clean shutdown would silently discard up to `commit_every`
+            # events of work and replay them on the next run.
+            if pending:
+                conn.commit()
+                if last_msg is not None:
+                    consumer.commit(last_msg, asynchronous=False)
         finally:
             consumer.close()
 

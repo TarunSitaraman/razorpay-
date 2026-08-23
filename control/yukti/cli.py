@@ -76,5 +76,119 @@ def outbox(
             _time.sleep(1.0)
 
 
+@app.command()
+def plan(
+    merchant: str = typer.Option(None, help="Merchant id; omit to plan every merchant"),
+    date: str = typer.Option(None, "--date", help="Planning moment, ISO (default: now)"),
+    limit: int = typer.Option(0, help="Cap cases considered (0 = all)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Decide, persist, do not dispatch"),
+) -> None:
+    """Run one planning cycle: score, stop, allocate, check, dispatch."""
+    from datetime import UTC, datetime
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from yukti.pipeline import plan_cycle
+    from yukti.store.db import connect
+
+    console = Console()
+    as_of = datetime.fromisoformat(date) if date else datetime.now(UTC)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=UTC)
+
+    with connect() as conn:
+        if merchant:
+            merchant_ids = [merchant]
+        else:
+            merchant_ids = [
+                r["id"] for r in conn.execute(
+                    "SELECT DISTINCT c.merchant_id AS id FROM recovery_case c "
+                    " WHERE c.state IN ('open', 'planning') ORDER BY 1"
+                )
+            ]
+        if not merchant_ids:
+            console.print("[yellow]no merchant has an open case[/] — "
+                          "run `make replay-fast && make consume` first")
+            raise typer.Exit(1)
+
+        results = [
+            plan_cycle(conn, mid, as_of, limit=limit or None, dry_run=dry_run)
+            for mid in merchant_ids
+        ]
+
+        table = Table(title=f"Planning cycle @ {as_of:%Y-%m-%d %H:%M}",
+                      header_style="bold")
+        for col in ("merchant", "cases", "stopped", "dispatched", "escalated",
+                    "suppressed", "contacts", "discount", "opt"):
+            table.add_column(col, justify="right" if col != "merchant" else "left")
+        for r in results:
+            table.add_row(
+                r.merchant_id[-8:], f"{r.considered:,}", f"{r.stopped:,}",
+                f"{r.dispatched:,}", f"{r.escalated:,}", f"{r.suppressed:,}",
+                f"{r.contacts_spent:,}",
+                f"Rs {r.discount_spent_paise / 100:,.0f}",
+                f"{r.optimality_ratio:.3f}",
+            )
+        console.print(table)
+
+        stops: dict[str, int] = {}
+        not_chased = 0
+        for r in results:
+            not_chased += r.not_chased_paise
+            for reason, n in r.stop_breakdown.items():
+                stops[reason] = stops.get(reason, 0) + n
+        if stops:
+            st = Table(title="Stopping rules — work deliberately not done",
+                       header_style="bold")
+            st.add_column("rule"); st.add_column("cases", justify="right")
+            for reason, n in sorted(stops.items(), key=lambda kv: -kv[1]):
+                st.add_row(reason, f"{n:,}")
+            console.print(st)
+            console.print(f"  money deliberately not chased: "
+                          f"[bold]Rs {not_chased / 100:,.0f}[/]")
+
+        if any(r.blocked for r in results):
+            console.print(f"  [red]{sum(r.blocked for r in results)} actions blocked "
+                          f"AFTER allocation[/] — the feasibility filter and the "
+                          f"full policy evaluation disagreed; this is a bug")
+
+
+@app.command("audit-verify")
+def audit_verify(
+    merchant: str = typer.Option(None, help="Merchant id; omit to verify all"),
+) -> None:
+    """Walk the audit hash chain and report the first row that does not verify."""
+    from rich.console import Console
+
+    from yukti import audit
+    from yukti.store.db import connect
+
+    console = Console()
+    with connect() as conn:
+        statuses = ([audit.verify(conn, merchant)] if merchant
+                    else audit.verify_all(conn))
+    if not statuses:
+        console.print("[yellow]no audit events recorded[/]")
+        return
+    for st in statuses:
+        colour = "green" if st.intact else "red"
+        console.print(f"  [{colour}]{st}[/]")
+    if not all(st.intact for st in statuses):
+        raise typer.Exit(1)
+
+
+@app.command("seed-policy")
+def seed_policy() -> None:
+    """Give every merchant an active policy pack from its segment defaults."""
+    from yukti.policy.store import seed_defaults
+    from yukti.store.db import connect
+
+    with connect() as conn:
+        n = seed_defaults(conn)
+        conn.commit()
+    typer.echo(f"  seeded {n} merchant policy pack(s)")
+
+
 if __name__ == "__main__":
     app()

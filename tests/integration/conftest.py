@@ -33,14 +33,52 @@ def fake_redis():
     return FakeRedis()
 
 
+# Tables holding per-merchant rows, in reverse foreign-key order. Used by the
+# `merchant` fixture's teardown.
+_MERCHANT_SCOPED = (
+    ("recovery_outcome", "case_id IN (SELECT id FROM recovery_case WHERE merchant_id = %s)"),
+    ("recovery_action", "case_id IN (SELECT id FROM recovery_case WHERE merchant_id = %s)"),
+    ("policy_evaluation", "decision_id IN (SELECT id FROM agent_decision WHERE case_id "
+                          "IN (SELECT id FROM recovery_case WHERE merchant_id = %s))"),
+    ("agent_decision", "case_id IN (SELECT id FROM recovery_case WHERE merchant_id = %s)"),
+    ("recovery_case", "merchant_id = %s"),
+    ("agent_run", "merchant_id = %s"),
+    ("promise_to_pay", "obligation_id IN (SELECT id FROM obligation WHERE merchant_id = %s)"),
+    ("payment_attempt", "obligation_id IN (SELECT id FROM obligation WHERE merchant_id = %s)"),
+    ("obligation", "merchant_id = %s"),
+    ("customer", "merchant_id = %s"),
+    ("policy_pack", "merchant_id = %s"),
+    ("budget_ledger", "merchant_id = %s"),
+    ("audit_event", "merchant_id = %s"),
+    ("experiment", "merchant_id = %s"),
+    ("merchant", "id = %s"),
+)
+
+
 @pytest.fixture
 def merchant(conn):
+    """A throwaway merchant, cleaned up afterwards.
+
+    Rolling back the connection is not enough on its own: `plan_cycle` commits,
+    because committing is what it does in production and a test that prevented
+    that would not be testing the real path. So the fixture deletes its own
+    merchant's rows at teardown instead.
+
+    Without this, every integration run leaves stopped cases and audit rows in
+    the development database, and the console, the metrics and any later
+    measurement quietly read test data as if it were real.
+    """
     mid = merchant_id()
     conn.execute(
         "INSERT INTO merchant (id, name, segment) VALUES (%s, %s, %s)",
         (mid, "Test Merchant", "d2c_subscription"),
     )
-    return mid
+    yield mid
+
+    conn.rollback()
+    for table, predicate in _MERCHANT_SCOPED:
+        conn.execute(f"DELETE FROM {table} WHERE {predicate}", (mid,))
+    conn.commit()
 
 
 @pytest.fixture

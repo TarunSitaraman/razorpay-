@@ -19,6 +19,7 @@ training/serving skew stays invisible until it costs money.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
 import psycopg
@@ -193,3 +194,153 @@ def build_frame(conn: psycopg.Connection, limit: int | None = None) -> Frame:
 
 def feature_names(frame: Frame) -> list[str]:
     return list(frame.X.columns)
+
+
+# ---------------------------------------------------------------------------
+# Serving: open cases and counterfactual candidate scoring
+#
+# `build_frame` above is training-only by construction — it INNER JOINs
+# recovery_outcome, which an open case does not have, and reads the action
+# columns from a decision that has not been made yet. Serving needs the mirror
+# image: cases with no outcome, scored under actions we are *considering*.
+#
+# Both paths run through the same `_derive`, and the scoring path asserts the
+# same FORBIDDEN guard. If they diverged, training/serving skew would show up as
+# a model that looks excellent offline and picks badly in production, which is
+# the failure mode that is hardest to notice and most expensive to have.
+# ---------------------------------------------------------------------------
+
+OPEN_CASE_SQL = """
+SELECT c.id                          AS case_id,
+       c.arm, c.merchant_id, c.customer_id, c.opened_at,
+       o.id                          AS obligation_id,
+       o.kind                        AS obligation_kind,
+       o.amount_paise,
+       o.state                       AS obligation_state,
+       m.segment                     AS merchant_segment,
+       m.mdr_bps,
+       a.rail, a.issuer, a.psp, a.decline_code,
+       a.first_failed_at, a.attempts_made,
+       cu.ltv_band, cu.tenure_days, cu.preferred_channel,
+       cu.prior_payments, cu.prior_failures, cu.prior_contacts,
+       cu.prior_contact_responses, cu.prior_optouts, cu.days_since_last_payment,
+       cu.prior_unprompted_payments, cu.prior_prompted_payments,
+       cu.consent,
+       (cu.opted_out_at IS NOT NULL)  AS customer_opted_out,
+       (ptp.id IS NOT NULL)           AS open_promise_to_pay,
+       coalesce(ct.n, 0)              AS contacts_this_window
+  FROM recovery_case c
+  JOIN obligation  o  ON o.id  = c.obligation_id
+  JOIN merchant    m  ON m.id  = c.merchant_id
+  JOIN customer    cu ON cu.id = c.customer_id
+  JOIN LATERAL (
+      SELECT rail, issuer, psp, decline_code,
+             min(attempted_at) OVER ()   AS first_failed_at,
+             count(*)          OVER ()   AS attempts_made
+        FROM payment_attempt
+       WHERE obligation_id = o.id AND status = 'failed'
+       ORDER BY attempted_at DESC LIMIT 1
+  ) a ON true
+  -- Open AS OF the planning moment, not as of now. A planner replaying an
+  -- earlier date must see the promises that were live then.
+  LEFT JOIN promise_to_pay ptp
+         ON ptp.obligation_id = o.id
+        AND ptp.created_at <= %(as_of)s
+        AND ptp.promised_for > %(as_of)s
+        AND ptp.state <> 'broken'
+  -- Contacts across EVERY case for this customer, on every surface. This is the
+  -- cross-agent arbitration signal: a per-case count cannot see it.
+  LEFT JOIN LATERAL (
+      SELECT count(*) AS n
+        FROM recovery_action ra
+        JOIN recovery_case rc ON rc.id = ra.case_id
+       WHERE rc.customer_id = c.customer_id
+         AND ra.dispatched_at >= %(as_of)s - interval '7 days'
+         AND ra.dispatched_at <  %(as_of)s
+         AND ra.kind IN ('message', 'voice_call', 'discount_offer')
+  ) ct ON true
+ WHERE c.state IN ('open', 'planning')
+   AND c.merchant_id = %(merchant_id)s
+   AND c.opened_at <= %(as_of)s
+"""
+
+
+def load_open_cases(
+    conn: psycopg.Connection, merchant_id: str, as_of: datetime,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    """Every case this merchant could work at `as_of`, with its decision context.
+
+    One query rather than one per concern. The stopping rules, the candidate
+    generator and the feature frame all read the same rows, so they cannot
+    disagree about what was true at planning time — which they would if each
+    fetched its own snapshot a few milliseconds apart.
+    """
+    sql = OPEN_CASE_SQL + (f" LIMIT {int(limit)}" if limit else "")
+    rows = conn.execute(sql, {"merchant_id": merchant_id, "as_of": as_of}).fetchall()
+    return pd.DataFrame(rows)
+
+
+def build_candidate_frame(base: pd.DataFrame, candidates: pd.DataFrame) -> Frame:
+    """Score one row per (case, proposed action).
+
+    `candidates` carries `case_id` plus the action columns —`action_kind`,
+    `action_channel`, `scheduled_for`, `cost_paise`, `discount_paise`,
+    `discount_pct`. Those are the columns that describe the intervention, and
+    substituting a proposed action for an observed one is exactly the
+    counterfactual `ActionConditionalUplift` is built to answer.
+
+    The returned `Frame` carries no outcome — nothing has happened yet — so the
+    label fields are zero-filled placeholders. They exist only because `Frame`
+    is shared with training; reading them at serving time would be a bug and
+    they are deliberately constant so such a bug is obvious rather than subtle.
+    """
+    if base.empty or candidates.empty:
+        return Frame(
+            X=pd.DataFrame(), treated=pd.Series(dtype=int), outcome=pd.Series(dtype=int),
+            archetype=pd.Series(dtype=object), case_id=pd.Series(dtype=object),
+            amount_paise=pd.Series(dtype=int), cost_paise=pd.Series(dtype=int),
+        )
+
+    context_cols = [c for c in base.columns if c not in candidates.columns or c == "case_id"]
+    df = candidates.merge(base[context_cols], on="case_id", how="inner")
+    if df.empty:
+        raise ValueError("no candidate matched a loaded case")
+
+    df = _derive(df)
+
+    keep_case = df["case_id"]
+    keep_amount = df["amount_paise"]
+    keep_cost = df["cost_paise"]
+
+    drop = FORBIDDEN | {
+        "case_id", "arm", "scheduled_for", "consent", "treated",
+        # Serving-only context. Read by the stopping rules and the policy engine
+        # from `base`, never by the model — several of them are decisions the
+        # system already made, and feeding a decision back in as a feature is
+        # how a model learns to predict its own policy.
+        "merchant_id", "customer_id", "obligation_id", "opened_at",
+        "obligation_state", "first_failed_at", "attempts_made",
+        "customer_opted_out", "open_promise_to_pay", "contacts_this_window",
+    }
+    X = df.drop(columns=[c for c in drop if c in df.columns])
+
+    for col in CATEGORICAL:
+        if col in X.columns:
+            X[col] = X[col].fillna("unknown").astype("category")
+
+    leaked = FORBIDDEN & set(X.columns)
+    if leaked:
+        raise FeatureLeakage(
+            f"forbidden column(s) reached the candidate frame: {sorted(leaked)}"
+        )
+
+    zeros = pd.Series(0, index=range(len(df)))
+    return Frame(
+        X=X.reset_index(drop=True),
+        treated=zeros, outcome=zeros,
+        archetype=pd.Series(["__unavailable__"] * len(df)),
+        case_id=keep_case.reset_index(drop=True),
+        amount_paise=keep_amount.reset_index(drop=True),
+        cost_paise=keep_cost.reset_index(drop=True),
+    )

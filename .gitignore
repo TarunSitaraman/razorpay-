@@ -30,3 +30,6 @@ edge/bin/
 
 # Go build output
 edge/bin/
+
+# Fitted model artifacts — rebuilt by `make train`, never committed.
+artifacts/

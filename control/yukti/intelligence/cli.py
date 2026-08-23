@@ -8,8 +8,11 @@ from rich.console import Console
 from rich.table import Table
 
 from yukti.config import settings
+from yukti.intelligence import registry
+from yukti.intelligence.debit_timing import DebitTimingModel
 from yukti.intelligence.features import build_frame
 from yukti.intelligence.uplift import (
+    ActionConditionalUplift,
     PropensityBaseline,
     TLearner,
     XLearner,
@@ -55,6 +58,8 @@ def _split(frame, test_frac: float, seed: int):
 def train(
     test_frac: float = typer.Option(0.3, help="Held-out fraction"),
     seeds: int = typer.Option(7, help="Number of independent splits to evaluate"),
+    save: bool = typer.Option(
+        False, "--save", help="Refit on ALL rows and persist for serving"),
 ) -> None:
     """Fit uplift and propensity models and run the gate.
 
@@ -164,11 +169,41 @@ def train(
     passed = (separation_wins == seeds and dogs_negative == seeds
               and prop_wins >= seeds * 0.7 and rand_wins >= seeds * 0.7)
     console.print()
-    if passed:
-        console.print("  [bold green]GATE PASSED[/] — proceed to the allocator")
-    else:
+    if not passed:
         console.print("  [bold red]GATE FAILED[/] — stop and reassess before building on this")
         raise typer.Exit(1)
+    console.print("  [bold green]GATE PASSED[/] — proceed to the allocator")
+
+    if not save:
+        return
+
+    # Refit on every row before persisting. The splits above answer "does this
+    # generalise"; the served model should then use all the data, which is
+    # standard and is why the gate runs first — persisting a model that failed
+    # the gate is the thing to make impossible, and `raise` above does that.
+    console.print("\n[bold]persisting for serving[/]")
+    cfg = settings()
+
+    action_model = ActionConditionalUplift(cfg.seed).fit(frame)
+    registry.save(action_model, frame, kind="uplift_action", seed=cfg.seed,
+                  metrics={"auuc_x_mean": float(col("auuc_x").mean()),
+                           "splits": float(seeds)})
+
+    prop_full = PropensityBaseline(cfg.seed).fit(frame)
+    registry.save(prop_full, frame, kind="propensity", seed=cfg.seed,
+                  metrics={"auuc_mean": float(col("auuc_p").mean())})
+
+    x_full = XLearner(cfg.seed).fit(frame)
+    registry.save(x_full, frame, kind="uplift", seed=cfg.seed,
+                  metrics={"auuc_mean": float(col("auuc_x").mean())})
+
+    timing = DebitTimingModel()
+    with connect() as conn:
+        timing.fit(conn)
+    registry.save(timing, frame, kind="debit_timing", seed=cfg.seed)
+
+    for kind in ("uplift_action", "uplift", "propensity", "debit_timing"):
+        console.print(f"  [green]saved[/]  {registry.ARTIFACT_DIR.name}/{kind}.pkl")
 
 
 @app.command()
