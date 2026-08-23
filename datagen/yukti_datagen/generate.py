@@ -29,6 +29,7 @@ from yukti_datagen.calendar import (
     generate_downtime_windows,
     is_weekend,
 )
+from yukti_datagen.promises import Promise, generate_promises
 from yukti_datagen.world import ISSUERS, PSPS, Merchant, MerchantSpec, _weighted, build_world
 
 # Base per-rail success rate before any environment effect. UPI intent
@@ -107,6 +108,7 @@ class Dataset:
     attempts: list[dict]
     downtime: list[DowntimeWindow]
     degradations: list[DegradationEpisode]
+    promises: list[Promise]
 
 
 def _decline_text(code: str, issuer: str) -> str:
@@ -254,4 +256,14 @@ def generate(
                 ))
 
     events.sort(key=lambda e: e.ts)
-    return Dataset(world, events, obligations, attempts, downtime, degradations)
+
+    # Promises are derived from the finished obligation set rather than emitted
+    # inside the loop, because a promise needs to know when its obligation
+    # failed and the loop does not know that until the attempt is written.
+    failed_at = {
+        a["obligation_id"]: a["attempted_at"]
+        for a in attempts if a["status"] == "failed"
+    }
+    promises = generate_promises(seed, obligations, failed_at, start + timedelta(days=days))
+
+    return Dataset(world, events, obligations, attempts, downtime, degradations, promises)

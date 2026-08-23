@@ -1,4 +1,20 @@
-"""Build the randomised exploration history from the seeded database."""
+"""Build the randomised exploration history from the seeded database.
+
+The exploration period is a PREFIX of the simulated timeline, not the whole of
+it. Obligations whose last failure falls before the cutoff are consumed into
+randomised exploration cases and scored by the oracle; everything after the
+cutoff is left `open`, and that remainder is what the planner works on.
+
+Without the split there is nothing to plan. This module previously took every
+open failed obligation, which meant `plan_cycle` ran cleanly over an empty
+input set and reported success — the same silent-success failure the dedup
+namespace collision produced on day 2.
+
+It is also how this has to work in production. Uplift is identified from a
+deliberate exploration period; you train on that period and you plan on today.
+Training on cases the current policy chose would relearn the policy rather than
+the effect.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +33,20 @@ from yukti_datagen.world import ISSUERS
 console = Console()
 
 
-def build(days: int = 14) -> dict[str, int]:
-    """Generate the exploration period and write it to the recovery tables."""
+# Share of the simulated failure timeline given to exploration. The remainder is
+# the planning window. 0.75 leaves roughly a fortnight of open cases at the
+# default 60-day generation span — enough for the allocator to have real
+# choices to make, while keeping the training set large enough that the day-3
+# gate still passes on it.
+EXPLORATION_SHARE = 0.75
+
+
+def build(days: int = 14, exploration_share: float = EXPLORATION_SHARE) -> dict[str, int]:
+    """Generate the exploration period and write it to the recovery tables.
+
+    Returns the counts plus the cutoff, so the caller can print where the
+    training period ends and the planning period begins.
+    """
     cfg = settings()
 
     with connect() as conn:
@@ -35,12 +63,29 @@ def build(days: int = 14) -> dict[str, int]:
             ).fetchall()
         }
 
-        # One failed obligation = one case the exploration policy can act on.
+        # The cutoff is derived from the data rather than hardcoded, so
+        # regenerating with a different span moves it automatically instead of
+        # silently emptying one side of the split.
+        span = conn.execute(
+            "SELECT min(attempted_at) AS lo, max(attempted_at) AS hi "
+            "FROM payment_attempt WHERE status = 'failed'"
+        ).fetchone()
+        if span["lo"] is None:
+            raise SystemExit("no failed attempts — run `make seed` first")
+        share = min(max(exploration_share, 0.05), 0.95)
+        cutoff = span["lo"] + (span["hi"] - span["lo"]) * share
+
+        # One failed obligation = one case the exploration policy can act on,
+        # but only inside the exploration period. Obligations that failed after
+        # the cutoff stay open and untouched — they are the planner's input, and
+        # the planner must never see a case an exploration policy already acted
+        # on, or the two policies would be mixed in one measurement.
         rows = conn.execute(
             """
             SELECT o.id            AS obligation_id,
                    o.merchant_id, o.customer_id, o.amount_paise,
-                   a.decline_code, a.rail, a.attempted_at AS ts
+                   a.decline_code, a.rail, a.attempted_at AS ts,
+                   (ptp.id IS NOT NULL) AS open_promise
               FROM obligation o
               JOIN LATERAL (
                   SELECT decline_code, rail, attempted_at
@@ -48,8 +93,19 @@ def build(days: int = 14) -> dict[str, int]:
                    WHERE obligation_id = o.id AND status = 'failed'
                    ORDER BY attempted_at DESC LIMIT 1
               ) a ON true
+              -- Was a promise open AT THE MOMENT this case is worked, which is
+              -- not the same question as its final state. A promise that has
+              -- since been kept was still open then, and the intervention was
+              -- still made through it. Joining on state = 'open' would ask
+              -- "is it open now", which is the wrong clock entirely.
+              LEFT JOIN promise_to_pay ptp
+                     ON ptp.obligation_id = o.id
+                    AND ptp.created_at <= a.attempted_at
+                    AND ptp.promised_for > a.attempted_at
              WHERE o.state = 'open'
-            """
+               AND a.attempted_at < %s
+            """,
+            (cutoff,),
         ).fetchall()
 
         cases = [
@@ -62,6 +118,12 @@ def build(days: int = 14) -> dict[str, int]:
                 "decline_code": r["decline_code"],
                 "rail_is_mandate": Rail(r["rail"]).is_mandate,
                 "ts": r["ts"],
+                # Passed through to the oracle. The oracle already models this
+                # properly — an open promise floors organic recovery and chasing
+                # through one is net-negative — but it was previously hardcoded
+                # to False, which made the effect unobservable and the
+                # OPEN_PROMISE_TO_PAY stopping rule untrainable.
+                "open_promise": bool(r["open_promise"]),
             }
             for r in rows
         ]
@@ -113,7 +175,25 @@ def build(days: int = 14) -> dict[str, int]:
                  ("recovered" if t.recovered else "not_recovered"),
                  t.recovered_paise),
             )
+        # What the planner will see. Counted here rather than inferred, because
+        # "the split left something on both sides" is the property that matters
+        # and it should fail loudly if it ever stops holding.
+        left_open = conn.execute(
+            """
+            SELECT count(*) AS n
+              FROM obligation o
+             WHERE o.state = 'open'
+               AND NOT EXISTS (SELECT 1 FROM recovery_case rc
+                                WHERE rc.obligation_id = o.id)
+            """
+        ).fetchone()["n"]
         conn.commit()
+
+    if left_open == 0:
+        raise SystemExit(
+            "the exploration cutoff consumed every open obligation — the planner "
+            "would have no input. Lower exploration_share."
+        )
 
     treated = sum(1 for t in treatments if t.action_kind != "suppress")
     control = len(treatments) - treated
@@ -122,4 +202,7 @@ def build(days: int = 14) -> dict[str, int]:
         "cases": len(treatments), "treated": treated, "control": control,
         "recovered": recovered,
         "opted_out": sum(1 for t in treatments if t.opted_out),
+        "promised": sum(1 for c in cases if c["open_promise"]),
+        "cutoff": cutoff,
+        "left_open": left_open,
     }

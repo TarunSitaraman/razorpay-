@@ -72,16 +72,26 @@ def replay_webhooks_cmd(
 
 
 @app.command()
-def history(days: int = typer.Option(14, help="Days the exploration period spans")) -> None:
+def history(
+    days: int = typer.Option(14, help="Days the exploration period spans"),
+    share: float = typer.Option(
+        0.75, help="Share of the failure timeline given to exploration; the rest "
+                   "stays open as the planning window"),
+) -> None:
     """Generate the randomised exploration history (the RCT that identifies uplift)."""
     from yukti_datagen.history_cli import build
 
-    stats = build(days=days)
+    stats = build(days=days, exploration_share=share)
     console.print(
         f"  cases [bold]{stats['cases']:,}[/]  "
         f"treated [green]{stats['treated']:,}[/]  control [cyan]{stats['control']:,}[/]  "
         f"recovered [bold]{stats['recovered']:,}[/]  "
-        f"opted-out [red]{stats['opted_out']:,}[/]"
+        f"opted-out [red]{stats['opted_out']:,}[/]  "
+        f"with-promise [magenta]{stats['promised']:,}[/]"
+    )
+    console.print(
+        f"  cutoff [bold]{stats['cutoff']:%Y-%m-%d %H:%M}[/] — "
+        f"[bold]{stats['left_open']:,}[/] obligations left open for the planner"
     )
 
 

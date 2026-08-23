@@ -171,7 +171,12 @@ def run_exploration(
             rail_is_mandate=case["rail_is_mandate"],
             preferred_channel=Channel(cust["preferred_channel"]),
             prior_contacts_7d=prior_contacts,
-            open_promise=False,
+            # Read from the case rather than hardcoded. The oracle has always
+            # modelled promises — an open one floors organic recovery and
+            # chasing through it costs 18 points — but passing False here meant
+            # no training example ever exhibited the effect, so the uplift model
+            # could not learn it and the stopping rule could not be validated.
+            open_promise=bool(case.get("open_promise", False)),
             in_downtime=in_downtime,
         )
         outcome = evaluate(ctx, iv, seed)

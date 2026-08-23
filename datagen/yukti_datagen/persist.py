@@ -112,6 +112,16 @@ def to_postgres(ds: Dataset) -> dict[str, int]:
                for e in ds.degradations])
         counts["degradation_signal"] = len(ds.degradations)
 
+        # Promise-to-pay. An OPEN promise is a hard stopping rule, so these rows
+        # are read by the decision path, not merely displayed.
+        _copy(cur, "promise_to_pay",
+              ["id", "obligation_id", "promised_amount_paise", "promised_for",
+               "source", "state", "confidence", "created_at", "resolved_at"],
+              [(pr.id, pr.obligation_id, pr.promised_amount_paise, pr.promised_for,
+                pr.source, pr.state, pr.confidence, pr.created_at, pr.resolved_at)
+               for pr in ds.promises])
+        counts["promise_to_pay"] = len(ds.promises)
+
         conn.commit()
     return counts
 

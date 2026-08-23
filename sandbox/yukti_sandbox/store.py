@@ -26,6 +26,12 @@ class PaymentLink:
     status: str = "created"
     notified_via: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
+    # Carried in Razorpay's `notes`, which is where a merchant puts their own
+    # context. The simulator needs them to score the outcome of a notification:
+    # a link sent with a 10% incentive converts differently from a bare one.
+    discount_pct: float = 0.0
+    action_kind: str = "payment_link"
+    issuer: str | None = None
 
 
 @dataclass(slots=True)
@@ -47,6 +53,7 @@ class SandboxStore:
         self.links: dict[str, PaymentLink] = {}
         self.attempts: dict[str, DebitAttempt] = {}
         self.emitted: list[dict[str, Any]] = []
+        self.calls: set[str] = set()
         # Idempotency map, mirroring how a real PSP treats a repeated request
         # carrying the same key: return the ORIGINAL resource rather than
         # creating a second one. Without this the sandbox would happily charge
@@ -65,6 +72,12 @@ class SandboxStore:
             if idem:
                 self.idempotency[idem] = attempt.id
 
+    def put_call(self, call_id: str, idem: str | None = None) -> None:
+        with self._lock:
+            self.calls.add(call_id)
+            if idem:
+                self.idempotency[idem] = call_id
+
     def resolve_idempotent(self, idem: str | None) -> str | None:
         if not idem:
             return None
@@ -80,6 +93,7 @@ class SandboxStore:
             self.links.clear()
             self.attempts.clear()
             self.emitted.clear()
+            self.calls.clear()
             self.idempotency.clear()
 
 

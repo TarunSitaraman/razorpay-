@@ -28,6 +28,7 @@ import httpx
 from fastapi import Body, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from yukti_sandbox import world
 from yukti_sandbox.signing import sign
 from yukti_sandbox.store import DebitAttempt, PaymentLink, store
 
@@ -217,6 +218,9 @@ async def create_payment_link(
         customer_id=str(req.notes.get("customer_id", "")),
         amount_paise=req.amount,
         short_url=f"https://rzp.io/i/{lid[-8:]}",
+        discount_pct=float(req.notes.get("discount_pct", 0) or 0),
+        action_kind=str(req.notes.get("action_kind", "payment_link")),
+        issuer=req.notes.get("issuer") or None,
     )
     store.put_link(link, x_idempotency_key)
     return {"id": lid, "short_url": link.short_url, "status": link.status,
@@ -232,12 +236,65 @@ async def notify_by(link_id: str, medium: str) -> dict[str, Any]:
     if medium not in ("sms", "email", "whatsapp"):
         raise HTTPException(400, {"error": {"code": "BAD_REQUEST_ERROR",
                                             "description": f"unsupported medium {medium}"}})
+    if medium in link.notified_via:
+        # A repeated notify is a no-op rather than a second nudge. Real delivery
+        # is at-least-once, and re-scoring the outcome on a redelivery would let
+        # a retried HTTP call manufacture a recovery that never happened.
+        return {"success": True, "idempotent_replay": True}
+
     link.notified_via.append(medium)
+
+    # Sending the link is the intervention, so this is where the outcome is
+    # decided. Creating the link is not: an unsent link cannot convert, and
+    # scoring at creation would credit recoveries to actions never delivered.
+    now = _now()
+    truth = world.resolve(link.customer_id, link.obligation_id, link.issuer, now)
+    outcome = simulate_outcome(
+        obligation_id=link.obligation_id, customer_id=link.customer_id,
+        amount_paise=link.amount_paise, action_kind=link.action_kind,
+        channel=medium, decline_code="UNKNOWN", archetype=truth.archetype,
+        prior_contacts=truth.prior_contacts_7d, at=now,
+        in_downtime=truth.in_downtime, open_promise=truth.open_promise,
+        discount_pct=link.discount_pct,
+    )
+
+    if outcome["opted_out"]:
+        # Opt-out is global and immediate under DPDP. It is emitted as its own
+        # event rather than folded into a failure, because the control plane has
+        # to act on it across every surface, not just this case.
+        link.status = "cancelled"
+        await emit("customer.opted_out", {
+            "merchant_id": link.merchant_id, "customer_id": link.customer_id,
+            "obligation_id": link.obligation_id, "channel": medium, "version": 2,
+        })
+    elif outcome["recovered"]:
+        link.status = "paid"
+        await emit("payment.captured", {
+            "merchant_id": link.merchant_id, "customer_id": link.customer_id,
+            "obligation_id": link.obligation_id, "attempt_id": _rid("pay"),
+            "amount_paise": outcome["recovered_paise"] or link.amount_paise,
+            "rail": "upi_intent", "decline_code": None, "version": 2,
+        })
+
     return {"success": True}
 
 
 class ChargeRequest(BaseModel):
-    """A mandate debit — UPI AutoPay, e-NACH or a recurring card."""
+    """A mandate debit — UPI AutoPay, e-NACH or a recurring card.
+
+    Every field here is one a real Razorpay call carries. `archetype`,
+    `in_downtime`, `open_promise` and `prior_contacts` used to be accepted from
+    the caller; they are ground truth and the simulator now resolves them
+    itself (see `world.py`). Accepting them meant the control plane had to read
+    `customer.archetype` in order to dispatch, which is precisely the leak the
+    feature layer refuses — and it would have leaked through the component least
+    likely to be re-read.
+
+    `extra = "forbid"` is the enforcement. A dispatcher that regains the habit
+    of sending ground truth gets a 422, not a silent success.
+    """
+
+    model_config = {"extra": "forbid"}
 
     amount: int = Field(..., gt=0)
     obligation_id: str
@@ -245,10 +302,7 @@ class ChargeRequest(BaseModel):
     customer_id: str
     rail: str = "upi_autopay"
     decline_code: str = "INSUFFICIENT_FUNDS"
-    archetype: str = "persuadable"
-    prior_contacts: int = 0
-    in_downtime: bool = False
-    open_promise: bool = False
+    issuer: str | None = None
 
 
 @app.post("/v1/subscriptions/{sub_id}/charge")
@@ -264,12 +318,14 @@ async def charge(
         return {"id": a.id, "status": a.status, "decline_code": a.decline_code,
                 "idempotent_replay": True}
 
+    now = _now()
+    truth = world.resolve(req.customer_id, req.obligation_id, req.issuer, now)
     outcome = simulate_outcome(
         obligation_id=req.obligation_id, customer_id=req.customer_id,
         amount_paise=req.amount, action_kind="schedule_debit", channel="none",
-        decline_code=req.decline_code, archetype=req.archetype,
-        prior_contacts=req.prior_contacts, at=_now(),
-        in_downtime=req.in_downtime, open_promise=req.open_promise,
+        decline_code=req.decline_code, archetype=truth.archetype,
+        prior_contacts=truth.prior_contacts_7d, at=now,
+        in_downtime=truth.in_downtime, open_promise=truth.open_promise,
     )
 
     pid = _rid("pay")
@@ -303,6 +359,66 @@ async def fetch_payment(payment_id: str) -> dict[str, Any]:
     return {"id": a.id, "status": a.status, "amount": a.amount_paise,
             "method": a.rail, "error_code": a.decline_code,
             "created_at": int(a.created_at.timestamp())}
+
+
+# ---------------------------------------------------------------------------
+# Simulated non-Razorpay channels
+#
+# Razorpay does not expose a voice API, so this is NOT part of any Razorpay
+# contract and is namespaced `/_sim/` so it can never be mistaken for one. It
+# exists because a voice call costs Rs 9 against Rs 0.75 for WhatsApp, and an
+# allocator that never sees an expensive channel is not being tested on the
+# decision that matters.
+# ---------------------------------------------------------------------------
+
+class VoiceCallRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    amount: int = Field(..., gt=0)
+    obligation_id: str
+    merchant_id: str
+    customer_id: str
+    issuer: str | None = None
+    discount_pct: float = 0.0
+
+
+@app.post("/_sim/voice_calls")
+async def voice_call(
+    req: VoiceCallRequest,
+    x_idempotency_key: str | None = Header(None, alias="X-Idempotency-Key"),
+) -> dict[str, Any]:
+    existing = store.resolve_idempotent(x_idempotency_key)
+    if existing:
+        return {"id": existing, "status": "completed", "idempotent_replay": True}
+
+    now = _now()
+    truth = world.resolve(req.customer_id, req.obligation_id, req.issuer, now)
+    outcome = simulate_outcome(
+        obligation_id=req.obligation_id, customer_id=req.customer_id,
+        amount_paise=req.amount, action_kind="voice_call", channel="voice",
+        decline_code="UNKNOWN", archetype=truth.archetype,
+        prior_contacts=truth.prior_contacts_7d, at=now,
+        in_downtime=truth.in_downtime, open_promise=truth.open_promise,
+        discount_pct=req.discount_pct,
+    )
+
+    cid = _rid("call")
+    store.put_call(cid, x_idempotency_key)
+
+    if outcome["opted_out"]:
+        await emit("customer.opted_out", {
+            "merchant_id": req.merchant_id, "customer_id": req.customer_id,
+            "obligation_id": req.obligation_id, "channel": "voice", "version": 2,
+        })
+    elif outcome["recovered"]:
+        await emit("payment.captured", {
+            "merchant_id": req.merchant_id, "customer_id": req.customer_id,
+            "obligation_id": req.obligation_id, "attempt_id": _rid("pay"),
+            "amount_paise": outcome["recovered_paise"] or req.amount,
+            "rail": "upi_intent", "decline_code": None, "version": 2,
+        })
+
+    return {"id": cid, "status": "completed"}
 
 
 # ---------------------------------------------------------------------------
