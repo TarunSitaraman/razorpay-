@@ -39,24 +39,41 @@ INJECTIONS = (
 
 
 class StubClient:
-    """Returns whatever the injection 'asked for', as far as the schema allows."""
+    """Returns whatever the injection 'asked for', as far as the schema allows.
+
+    Stands in for the provider chain. The point of these tests is that the
+    system holds even when the model does exactly what an attacker asked — so
+    the stub is maximally compliant, and every assertion is about what the
+    surrounding code does with that compliance.
+    """
 
     def __init__(self, output) -> None:
         self._output = output
         self.prompts: list[str] = []
 
-    @property
-    def messages(self):
-        return self
+    def complete(self, **kwargs):
+        self.prompts.append(kwargs["prompt"])
 
-    def parse(self, **kwargs):
-        self.prompts.append(kwargs["messages"][0]["content"])
+        # Honour the validation hook exactly as the real chain does. A stub that
+        # skipped it would silently diverge from the thing it stands in for, and
+        # the citation guard would look tested while never running.
+        validate = kwargs.get("validate")
+        if validate is not None and not validate(self._output):
+            from yukti.llm.chain import AllProvidersFailed
+            from yukti.llm.errors import Disposition, Failure
 
-        class _R:
-            parsed_output = self._output
-            usage = type("U", (), {"input_tokens": 10, "output_tokens": 5})()
+            raise AllProvidersFailed([Failure(
+                "stub", Disposition.FALL_THROUGH,
+                "answer was rejected by the caller's validation")])
 
-        return _R()
+        class _Completion:
+            parsed = self._output
+            provider = "stub"
+            model = "stub-model"
+            usage = {"input": 10, "output": 5}
+            from_cache = False
+
+        return _Completion()
 
 
 # --- 1. the capability simply does not exist --------------------------------
@@ -234,11 +251,15 @@ def test_composer_accepts_a_clean_body():
 # --- 6. every specialist degrades safely ------------------------------------
 
 class ExplodingClient:
-    @property
-    def messages(self):
-        return self
+    """Every provider in the chain failed.
 
-    def parse(self, **kwargs):
+    Whether one provider refused or all nine did, `AllProvidersFailed` reaches
+    the specialist as an ordinary exception and the answer is the same
+    conservative default — which is why the chain needed no special handling in
+    the specialists at all.
+    """
+
+    def complete(self, **kwargs):
         raise RuntimeError("model unavailable")
 
 

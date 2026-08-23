@@ -103,8 +103,44 @@ amount, a policy verdict, or a holdout assignment.
 |---|---|
 | Root-cause an aggregate degradation from retrieved evidence | Compute an amount to charge, refund or discount |
 | Classify novel free-text decline reasons (clamped to a closed enum) | Decide whether a policy is satisfied |
-| Compile merchant natural-language policy into a testable DSL | Choose a holdout assignment |
+| Propose which action kinds *not* to fund for a cohort — it can only ever **remove** candidates | Choose a holdout assignment |
 | Compose channel copy, including Hinglish, bound to a DLT template | Issue refunds or payouts — *not in the tool schema at all* |
+
+## Bring your own model
+
+The repository ships an **empty `.env`**. Yukti is provider-agnostic: set a key
+for any of nine providers and it will use it, or set none and it still runs.
+
+```bash
+cp .env.example .env          # every provider, all commented out
+python -m yukti.cli llm-status   # what is configured, and what failed last
+```
+
+Providers are tried in order. One with no key is skipped without opening a
+socket; one that fails permanently — bad key, blocked host, retired model — is
+dropped for the rest of the process rather than re-tried on every call.
+
+| Free tier | Notes |
+|---|---|
+| **Gemini** | Free key from aistudio.google.com, no card. The most generous option. |
+| **Groq** | Fastest free inference available. |
+| **Cerebras**, **OpenRouter** (`:free` models), **Mistral**, **Together** | All free tiers. |
+| **GitHub Models** | Uses an ordinary GitHub PAT — often the one credential you already have. |
+| **Ollama** | Fully local, no key, no network. The only option where nothing leaves the machine. |
+| Anthropic | Not free; the strongest structured-output support. Last in the default order. |
+
+Everything except Anthropic speaks the OpenAI chat-completions format, so there
+is one adapter and a table rather than nine integrations. Structured output
+degrades in three rungs — `json_schema`, then `json_object`, then schema-in-prompt
+— and every rung ends in Pydantic validation, so a provider that advertises more
+than it implements costs a retry rather than a wrong answer.
+
+**Running with no key at all is a supported state, not a degraded one.** The
+stopping rules, the allocator, the policy engine and the dispatcher never call a
+model. The agent falls back to conservative defaults and *says so* — every
+conclusion records whether it came from a model or a fallback, because a fleet
+quietly running on defaults behaves plausibly and looks exactly like one that is
+working.
 
 ## Correctness properties
 
@@ -127,6 +163,13 @@ amount, a policy verdict, or a holdout assignment.
   simulated implementation. It is not Vulcan and is never described as such.
 - Claims about Razorpay products come from public sources, cited in
   `docs/RESEARCH.md`.
+- The agent's model calls are **not exercised in the build environment**, which
+  has no LLM credential. The provider chain is unit-tested, verified end to end
+  against a real HTTP endpoint, and its *failure* path is verified live: with
+  nothing configured, `yukti agent` on a genuinely detected degradation reports
+  `provenance: {'fallback': 2}` and withholds contact rather than guessing.
+  `tests/integration/test_llm_live.py` runs against a real provider for anyone
+  with a key (`YUKTI_LIVE_LLM_TESTS=1`).
 
 ## Layout
 

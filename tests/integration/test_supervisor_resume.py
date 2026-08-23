@@ -26,27 +26,31 @@ AS_OF = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
 
 
 class CountingClient:
-    """Counts calls so 'did not re-call the model' is measured, not assumed."""
+    """Counts calls so 'did not re-call the model' is measured, not assumed.
+
+    Stands in for the provider chain. Which provider would have answered is
+    irrelevant to resumption — what matters is that a settled conclusion costs
+    nothing to re-read.
+    """
 
     def __init__(self) -> None:
         self.calls = 0
 
-    @property
-    def messages(self):
-        return self
-
-    def parse(self, **kwargs):
+    def complete(self, **kwargs):
         self.calls += 1
 
-        class _R:
-            parsed_output = RCAVerdict(
+        class _Completion:
+            parsed = RCAVerdict(
                 root_cause="issuer_outage", posture="suppress_and_wait",
                 narrative="Issuer-side failure with a BANK_DOWN-heavy decline mix.",
                 cited_evidence_ids=[], confidence=0.85,
             )
-            usage = type("U", (), {"input_tokens": 100, "output_tokens": 40})()
+            provider = "stub"
+            model = "stub-model"
+            usage = {"input": 100, "output": 40}
+            from_cache = False
 
-        return _R()
+        return _Completion()
 
 
 @pytest.fixture

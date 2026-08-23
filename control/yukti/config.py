@@ -32,13 +32,31 @@ class Settings(BaseSettings):
     webhook_secret: str = "yukti_dev_webhook_secret"
 
     # Tiered models: the cheap one does high-volume classification, the capable
-    # one does planning and policy compilation. Cost per decision is a reported
-    # metric, so this split is measured rather than assumed — and the volume
-    # path is the one that would dominate the bill.
+    # one does planning. Cost per decision is a reported metric, so this split
+    # is measured rather than assumed — and the volume path is the one that
+    # would dominate the bill.
     #
-    # IDs are complete as written; do not append date suffixes.
+    # These are the ANTHROPIC ids. Every other provider carries its own defaults
+    # in `llm/registry.py`, overridable per provider. IDs are complete as
+    # written; do not append date suffixes.
     model_fast: str = "claude-haiku-4-5"
     model_planner: str = "claude-opus-5"
+
+    # Ordered provider chain. Each is tried in turn; one with no key is skipped
+    # without opening a socket, and one that fails permanently is disabled for
+    # the process. Empty string means "use the registry's default order".
+    #
+    # Yukti runs correctly with NONE of these configured — the specialists fall
+    # back to conservative defaults and the deterministic layer is unaffected.
+    # The chain improves how well the system explains itself; it never decides
+    # anything that moves money.
+    llm_providers: str = ""
+
+    # Disk cache for structured responses, keyed on the question rather than on
+    # the provider. Makes a repeated demo cost zero API calls and replay
+    # identically, which matters more than it sounds when free-tier rate limits
+    # are the constraint.
+    llm_cache_enabled: bool = True
 
     # Global holdout. Every merchant carries one; this is the denominator that
     # makes an incremental-lift claim meaningful.

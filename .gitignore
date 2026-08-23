@@ -33,3 +33,6 @@ edge/bin/
 
 # Fitted model artifacts — rebuilt by `make train`, never committed.
 artifacts/
+
+# Local credentials — never committed. .env.example is the template.
+.env

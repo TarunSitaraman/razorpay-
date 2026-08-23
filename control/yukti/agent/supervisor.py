@@ -106,7 +106,10 @@ class Supervisor:
         self.conn.execute(
             "INSERT INTO agent_run (id, merchant_id, kind, trace_id, model, status) "
             "VALUES (%s, %s, 'supervisor', %s, %s, 'running')",
-            (rid, merchant_id, trace_id, self.rca._model),
+            # Provider and model are recorded per CONCLUSION rather than per
+            # run: the chain may fall through mid-run, so one run can legitimately
+            # be served by more than one provider.
+            (rid, merchant_id, trace_id, "chain"),
         )
         return rid
 

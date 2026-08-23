@@ -129,6 +129,7 @@ def plan_cycle(
     dry_run: bool = False,
     scorer: Scorer | None = None,
     advice: Advice | None = None,
+    supervisor: Any | None = None,
 ) -> PlanResult:
     """Plan and execute one merchant's recovery for one window.
 
@@ -252,6 +253,10 @@ def plan_cycle(
     # 5. Dispatch, or record why not. Every survivor gets a decision row —
     #    including the ones we chose not to fund, because "considered and
     #    declined" is the number this system exists to be able to report.
+    # Compose the message bodies the funded actions actually need — one per
+    # distinct (kind, channel, language), never one per case.
+    bodies = _compose_bodies(conn, chosen.values(), advice, supervisor)
+
     own_adapters = adapters is None
     adapters = adapters or Adapters.sandbox()
     dispatcher = Dispatcher(conn, adapters)
@@ -265,7 +270,7 @@ def plan_cycle(
                 result.suppressed += 1
                 continue
             outcome = _act(conn, dispatcher, case, cand, proposals[cid], uplift,
-                           policy, tid, rid, as_of, dry_run)
+                           policy, tid, rid, as_of, dry_run, bodies)
             _tally(result, outcome)
     finally:
         if own_adapters:
@@ -600,6 +605,7 @@ def _act(
     conn, dispatcher: Dispatcher, case: dict, cand: Candidate,
     all_cands: list[Candidate], uplift: dict, policy: MerchantPolicy,
     tid: str, rid: str, as_of: datetime, dry_run: bool,
+    bodies: dict[tuple, str] | None = None,
 ) -> dict:
     """Full policy check, then dispatch. This is the second of the two checks."""
     request = _request(cand, case)
@@ -680,7 +686,7 @@ def _act(
         conn.commit()
         return {"dry_run": True, "candidate": cand}
 
-    spec = _spec(cand, case)
+    spec = _spec(cand, case, bodies)
     outcome = dispatcher.dispatch(spec, did, tid)
 
     if outcome.dispatched:
@@ -692,7 +698,7 @@ def _act(
     return {"dispatch": outcome, "candidate": cand}
 
 
-def _spec(cand: Candidate, case: dict) -> ActionSpec:
+def _spec(cand: Candidate, case: dict, bodies: dict[tuple, str] | None = None) -> ActionSpec:
     from dataclasses import replace
 
     spec = ActionSpec(
@@ -704,8 +710,62 @@ def _spec(cand: Candidate, case: dict) -> ActionSpec:
         issuer=cand.issuer, discount_pct=cand.discount_pct,
         discount_paise=cand.discount_paise,
         dlt_template_id=_template_for(cand),
+        body=(bodies or {}).get(body_key(cand), ""),
     )
+    # The body is deliberately NOT part of the fingerprint. Two runs that reach
+    # the same decision must collide even if the composer phrased the message
+    # differently, or a re-run would send a second message for the same debt
+    # purely because a model sampled a different sentence.
     return replace(spec, idempotency_key=fingerprint(spec))
+
+
+def _compose_bodies(
+    conn, candidates, advice: Advice, supervisor: Any | None,
+) -> dict[tuple, str]:
+    """Render one message body per distinct template.
+
+    Without a supervisor — or when every provider is unavailable — this returns
+    the deterministic templates, which are written to be genuinely shippable
+    rather than a placeholder. A customer receiving one would notice nothing;
+    the message is simply less personalised. That is what "degrades safely"
+    has to mean if the claim is going to be worth anything.
+    """
+    from yukti.agent.specialists import _TEMPLATE_BODY
+
+    needed = {
+        body_key(c) for c in candidates
+        if c.action_kind.contacts_customer or c.action_kind is ActionKind.PAYMENT_LINK
+    }
+    bodies: dict[tuple, str] = {}
+    for key in sorted(needed):
+        kind, channel, language = key
+        template = _TEMPLATE_BODY.get(kind, _TEMPLATE_BODY["message"])
+        if supervisor is None:
+            bodies[key] = template
+            continue
+        try:
+            body, _provenance = supervisor.compose(
+                advice.run_id, kind, channel, language)
+            bodies[key] = body
+        except Exception:  # noqa: BLE001
+            # Composition is the least consequential LLM job in the system.
+            # A failure here must never cost a recovery.
+            bodies[key] = template
+    return bodies
+
+
+def body_key(cand: Candidate) -> tuple[str, str, str]:
+    """What a composed message is keyed on.
+
+    Per (action kind, channel, language) — NOT per case. Bodies carry
+    `{amount}` and `{link}` placeholders that code substitutes afterwards, so
+    one body serves every customer receiving that kind of message on that
+    channel. That is what makes composition O(templates) rather than O(cases),
+    and it is the whole reason all three specialists can run live on a free tier:
+    at most a couple of dozen calls exist to be made, and the cache means they
+    are each made once ever.
+    """
+    return (cand.action_kind.value, cand.channel.value, "en")
 
 
 def _tally(result: PlanResult, outcome: dict) -> None:

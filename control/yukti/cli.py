@@ -178,6 +178,65 @@ def audit_verify(
         raise typer.Exit(1)
 
 
+@app.command("llm-status")
+def llm_status(
+    probe: bool = typer.Option(False, "--probe", help="Actually call each provider"),
+) -> None:
+    """Show which LLM providers are configured, and what failed last.
+
+    Worth having as its own command: a chain that silently degrades to
+    conservative defaults behaves plausibly and looks exactly like one that is
+    working. That is the same failure shape as every serious bug in this
+    project, so the difference gets a place to be visible.
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from yukti.llm.chain import AllProvidersFailed, client
+
+    console = Console()
+    chain = client()
+
+    if probe:
+        # One real call, which walks the chain and populates the failures.
+        from pydantic import BaseModel
+
+        class _Ping(BaseModel):
+            ok: bool
+
+        try:
+            result = chain.complete(
+                system="Reply with JSON.", prompt="Return {\"ok\": true}",
+                schema=_Ping, tier="fast", max_tokens=64, use_cache=False,
+            )
+            console.print(f"  [green]answered by {result.provider} "
+                          f"({result.model})[/]\n")
+        except AllProvidersFailed:
+            console.print("  [yellow]no provider answered[/] — "
+                          "Yukti will use conservative defaults\n")
+
+    table = Table(title="LLM providers", header_style="bold")
+    for col in ("provider", "key env", "status", "free tier"):
+        table.add_column(col)
+    for row in chain.report():
+        colour = ("green" if row["status"] == "ok"
+                  else "yellow" if row["configured"] else "dim")
+        table.add_row(
+            f"[{colour}]{row['provider']}[/]", row["key_env"],
+            row["status"], row["free_tier"] or "—",
+        )
+    console.print(table)
+
+    if not chain.any_configured:
+        console.print(
+            "\n  [dim]No provider configured. This is a supported state: the "
+            "stopping rules, allocator, policy engine and dispatcher do not "
+            "use a model. The agent falls back to conservative defaults and "
+            "says so.[/]\n  [dim]Copy .env.example to .env and set one key to "
+            "enable narratives.[/]"
+        )
+
+
 @app.command()
 def agent(
     merchant: str = typer.Option(..., help="Merchant id"),

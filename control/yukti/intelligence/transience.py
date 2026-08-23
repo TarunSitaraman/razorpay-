@@ -93,16 +93,20 @@ class TransienceClassifier:
     """Table-first classifier with an LLM tail and a process-wide cache."""
 
     def __init__(self, client=None, model: str | None = None) -> None:
+        # `client` is any object exposing `.complete(...)` — the provider chain
+        # in production, a stub in tests. Same seam as the agent specialists, so
+        # both LLM call sites in the system share one provider configuration and
+        # one circuit breaker.
         self._client = client
-        self._model = model or settings().model_fast
+        self._model = model
         self._cache: dict[str, Classification] = {}
         self.llm_calls = 0          # reported as cost per 1,000 opportunities
 
-    def _lazy_client(self):
+    def _completer(self):
         if self._client is None:
-            import anthropic
+            from yukti.llm.chain import client as chain_client
 
-            self._client = anthropic.Anthropic()
+            self._client = chain_client()
         return self._client
 
     def classify(self, code: str | None, text: str | None = None) -> Classification:
@@ -123,25 +127,23 @@ class TransienceClassifier:
 
     def _ask_llm(self, code: str, text: str | None) -> Classification:
         try:
-            client = self._lazy_client()
             self.llm_calls += 1
-            response = client.messages.parse(
-                model=self._model,
-                max_tokens=512,
+            completion = self._completer().complete(
                 system=SYSTEM,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "<untrusted_decline_data>\n"
-                        f"code: {code}\n"
-                        f"issuer_message: {(text or '(none)')[:400]}\n"
-                        "</untrusted_decline_data>\n\n"
-                        "Classify this decline reason."
-                    ),
-                }],
-                output_format=TransienceVerdict,
+                prompt=(
+                    "<untrusted_decline_data>\n"
+                    f"code: {code}\n"
+                    f"issuer_message: {(text or '(none)')[:400]}\n"
+                    "</untrusted_decline_data>\n\n"
+                    "Classify this decline reason."
+                ),
+                schema=TransienceVerdict,
+                # The high-volume path: one call per UNKNOWN code, cached
+                # thereafter, so this is the tier whose cost would dominate.
+                tier="fast",
+                max_tokens=512,
             )
-            verdict = response.parsed_output
+            verdict = completion.parsed
         except Exception as exc:  # noqa: BLE001 - any failure must degrade safely
             # Timeout, refusal, schema violation, network error: all the same
             # answer. The system degrades toward doing less, never toward
