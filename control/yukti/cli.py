@@ -178,6 +178,60 @@ def audit_verify(
         raise typer.Exit(1)
 
 
+@app.command()
+def agent(
+    merchant: str = typer.Option(..., help="Merchant id"),
+    date: str = typer.Option(..., "--date", help="Planning moment, ISO"),
+) -> None:
+    """Run the supervisor: scan for degradations, root-cause them, advise.
+
+    Prints provenance alongside every conclusion. That is deliberate — a
+    conclusion from a fallback reads exactly like one from the model unless the
+    difference is shown, and a fleet quietly running on defaults is the failure
+    mode nobody notices.
+    """
+    from datetime import UTC, datetime
+
+    from rich.console import Console
+
+    from yukti.agent import memory
+    from yukti.agent.supervisor import Supervisor
+    from yukti.domain.ids import trace_id
+    from yukti.store.db import connect
+
+    console = Console()
+    as_of = datetime.fromisoformat(date)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=UTC)
+
+    with connect() as conn:
+        sup = Supervisor(conn)
+        rid = sup.open_run(merchant, trace_id())
+        advice = sup.advise(rid, merchant, as_of)
+        sup.close_run(rid)
+        conn.commit()
+
+        if not advice.narratives:
+            console.print(f"  no degradation detected at {as_of:%Y-%m-%d %H:%M}")
+            return
+
+        for issuer, narrative in advice.narratives.items():
+            drops = sorted(advice.drops_for(issuer))
+            console.print(f"\n  [bold]{issuer}[/]")
+            console.print(f"    {narrative}")
+            console.print(f"    [dim]contact kinds withheld: "
+                          f"{', '.join(drops) if drops else 'none'}[/]")
+
+        stats = memory.provenance_stats(conn, rid)
+        console.print(f"\n  provenance: {stats}")
+        if advice.degraded:
+            console.print(
+                "  [yellow]some conclusions came from the conservative default[/] — "
+                "the model was unreachable, so the system withheld contact rather "
+                "than guessing"
+            )
+
+
 @app.command("reset-planning")
 def reset_planning(
     merchant: str = typer.Option(None, help="Merchant id; omit for every merchant"),

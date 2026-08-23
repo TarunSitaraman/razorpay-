@@ -68,6 +68,7 @@ from yukti.policy import engine as policy_engine
 from yukti.policy.merchantpack import MerchantContext, MerchantPolicy
 from yukti.policy.regpack import ActionRequest
 from yukti.policy.store import load_policy
+from yukti.agent.supervisor import Advice, no_advice
 from yukti.scoring import Scorer, default_scorer, key_for
 from yukti.stopping.rules import MIN_EXPECTED_MARGIN_PAISE, CaseSnapshot
 from yukti.stopping.rules import evaluate as evaluate_stopping
@@ -98,6 +99,11 @@ class PlanResult:
     infeasible: int = 0
     contacts_spent: int = 0
     discount_spent_paise: int = 0
+    # Candidates the agent removed, and whether any of its conclusions came from
+    # a fallback rather than the model. Both reported: a fleet silently running
+    # on fallbacks behaves plausibly and looks identical to one that is working.
+    agent_filtered: int = 0
+    agent_degraded: bool = False
     planned_margin_paise: int = 0
     # Money the stopping rules deliberately declined to chase, by named rule.
     stop_breakdown: dict[str, int] = field(default_factory=dict)
@@ -122,6 +128,7 @@ def plan_cycle(
     limit: int | None = None,
     dry_run: bool = False,
     scorer: Scorer | None = None,
+    advice: Advice | None = None,
 ) -> PlanResult:
     """Plan and execute one merchant's recovery for one window.
 
@@ -130,11 +137,18 @@ def plan_cycle(
     silently scoring everything at zero would make the stopping rules report the
     merchant's entire book as `LOST_CAUSE`, which is an operational failure
     dressed up as a business finding.
+
+    `advice` is the agent's contribution, and it can only REMOVE candidates.
+    Omitting it produces an empty `Advice`, not a different code path — one path
+    whether or not the agent ran, so the deterministic behaviour is exercised
+    either way.
     """
     tid = trace_id()
     rid = run_id()
     result = PlanResult(merchant_id=merchant_id, as_of=as_of, trace_id=tid, run_id=rid)
 
+    advice = advice if advice is not None else no_advice()
+    result.agent_degraded = advice.degraded
     policy = load_policy(conn, merchant_id)
     cases = load_open_cases(conn, merchant_id, as_of, limit)
     result.considered = len(cases)
@@ -143,7 +157,8 @@ def plan_cycle(
     audit.append(conn, trace_id=tid, merchant_id=merchant_id,
                  action="plan_cycle.started", actor=ActorKind.SYSTEM, subject_id=rid,
                  detail={"as_of": as_of.isoformat(), "cases": len(cases),
-                         "policy": _policy_digest(policy)})
+                         "policy": _policy_digest(policy),
+                         "agent_run": advice.run_id or None})
     conn.commit()
 
     if cases.empty:
@@ -154,9 +169,21 @@ def plan_cycle(
     # 1. Candidates. Deterministic, so a re-run reaches the same fingerprints.
     timing = _load_timing()
     by_case = {row["case_id"]: row for row in cases.to_dict("records")}
-    proposals: dict[str, list[Candidate]] = {
-        cid: generate(case, policy, as_of, timing) for cid, case in by_case.items()
-    }
+    proposals: dict[str, list[Candidate]] = {}
+    for cid, case in by_case.items():
+        cands = generate(case, policy, as_of, timing)
+        # The agent's only effect on what happens. It filters; it cannot append,
+        # so a wrong or injected plan can at worst leave fewer options on the
+        # table. SUPPRESS is never removable — a case with no candidate at all
+        # could not record "we considered this and chose nothing".
+        drops = advice.drops_for(case.get("issuer"))
+        if drops:
+            kept = [c for c in cands
+                    if c.action_kind is ActionKind.SUPPRESS
+                    or c.action_kind.value not in drops]
+            result.agent_filtered += len(cands) - len(kept)
+            cands = kept
+        proposals[cid] = cands
     result.candidates = sum(len(v) for v in proposals.values())
 
     # 2. What each (case, action) pair is worth. The scorer is injected because
@@ -264,7 +291,9 @@ def plan_cycle(
                          "suppressed": result.suppressed,
                          "contacts": result.contacts_spent,
                          "discount_paise": result.discount_spent_paise,
-                         "optimality_ratio": round(result.optimality_ratio, 4)})
+                         "optimality_ratio": round(result.optimality_ratio, 4),
+                         "agent_filtered": result.agent_filtered,
+                         "agent_degraded": result.agent_degraded})
     _close_run(conn, rid, "completed")
     conn.commit()
     return result
