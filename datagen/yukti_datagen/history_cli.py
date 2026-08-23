@@ -187,7 +187,11 @@ def build(days: int = 14, exploration_share: float = EXPLORATION_SHARE) -> dict[
                     (action_id(), did, t.case_id, t.action_kind, t.channel,
                      new_id("idem"), t.scheduled_for, t.scheduled_for,
                      t.cost_paise, t.discount_paise,
-                     json.dumps({"discount_pct": t.discount_pct})),
+                     # Realised spend goes in the payload, not in a column the
+                     # feature frame reads. It is an outcome; putting it beside
+                     # the offered amount is how the leak happened.
+                     json.dumps({"discount_pct": t.discount_pct,
+                                 "realised_discount_paise": t.realised_discount_paise})),
                 )
             conn.execute(
                 "INSERT INTO recovery_outcome (id, case_id, outcome, recovered_paise, "
@@ -200,14 +204,28 @@ def build(days: int = 14, exploration_share: float = EXPLORATION_SHARE) -> dict[
         # What the planner will see. Counted here rather than inferred, because
         # "the split left something on both sides" is the property that matters
         # and it should fail loudly if it ever stops holding.
+        # Obligations the exploration period did NOT take, i.e. those whose last
+        # failure falls at or after the cutoff. That is the planning window.
+        #
+        # An earlier version counted obligations with no recovery_case at all,
+        # which silently measures something else once the consumer has run: it
+        # counts unformed cases rather than unexplored obligations, so a healthy
+        # system with every case already formed reports zero and this guard
+        # aborts a run that was completely fine.
         left_open = conn.execute(
             """
             SELECT count(*) AS n
               FROM obligation o
+              JOIN LATERAL (
+                  SELECT attempted_at
+                    FROM payment_attempt
+                   WHERE obligation_id = o.id AND status = 'failed'
+                   ORDER BY attempted_at DESC LIMIT 1
+              ) a ON true
              WHERE o.state = 'open'
-               AND NOT EXISTS (SELECT 1 FROM recovery_case rc
-                                WHERE rc.obligation_id = o.id)
-            """
+               AND a.attempted_at >= %s
+            """,
+            (cutoff,),
         ).fetchone()["n"]
         conn.commit()
 

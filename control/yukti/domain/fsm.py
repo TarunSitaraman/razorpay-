@@ -28,10 +28,25 @@ class StaleEvent(ValueError):
 # A terminal state has no outgoing edges. That is the whole point of terminality:
 # once a case stops, only a human or a new obligation starts new work.
 _CASE_TRANSITIONS: dict[CaseState, frozenset[CaseState]] = {
-    CaseState.OPEN: frozenset({CaseState.PLANNING, CaseState.STOPPED, CaseState.RECOVERED}),
-    CaseState.PLANNING: frozenset({CaseState.SCHEDULED, CaseState.STOPPED, CaseState.RECOVERED}),
+    CaseState.OPEN: frozenset(
+        {CaseState.PLANNING, CaseState.SCHEDULED, CaseState.ESCALATED,
+         CaseState.AWAITING_OUTCOME, CaseState.STOPPED, CaseState.RECOVERED}
+    ),
+    CaseState.PLANNING: frozenset(
+        {CaseState.SCHEDULED, CaseState.ESCALATED, CaseState.STOPPED,
+         CaseState.RECOVERED}
+    ),
     CaseState.SCHEDULED: frozenset(
-        {CaseState.ACTING, CaseState.PLANNING, CaseState.STOPPED, CaseState.RECOVERED}
+        {CaseState.ACTING, CaseState.PLANNING, CaseState.ESCALATED,
+         CaseState.STOPPED, CaseState.RECOVERED}
+    ),
+    # Held for a human. They may approve it (-> ACTING), decline it
+    # (-> STOPPED), or take too long while the customer pays anyway
+    # (-> RECOVERED). It is deliberately NOT terminal: the money is still live,
+    # which is the whole difference between escalating and giving up.
+    CaseState.ESCALATED: frozenset(
+        {CaseState.ACTING, CaseState.SCHEDULED, CaseState.STOPPED,
+         CaseState.RECOVERED, CaseState.LOST}
     ),
     CaseState.ACTING: frozenset(
         {CaseState.AWAITING_OUTCOME, CaseState.STOPPED, CaseState.RECOVERED}

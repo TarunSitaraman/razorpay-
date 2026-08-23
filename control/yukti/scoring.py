@@ -104,7 +104,7 @@ class UpliftScorer(_ModelScorer):
         keys, scores = self._predict(cases, proposals)
         if not keys:
             return {}
-        return dict(zip(keys, scores.uplift, strict=True))
+        return _zero_suppress(dict(zip(keys, scores.uplift, strict=True)))
 
 
 class PropensityScorer(_ModelScorer):
@@ -123,7 +123,26 @@ class PropensityScorer(_ModelScorer):
         keys, scores = self._predict(cases, proposals)
         if not keys:
             return {}
-        return dict(zip(keys, scores.p_treated, strict=True))
+        return _zero_suppress(dict(zip(keys, scores.p_treated, strict=True)))
+
+
+def _zero_suppress(scores: dict[ScoreKey, float]) -> dict[ScoreKey, float]:
+    """Doing nothing has no causal effect, by definition.
+
+    The model-backed scorers were happily assigning SUPPRESS an uplift — the
+    counterfactual of doing nothing versus doing nothing — and returning values
+    like -0.0086 and +0.0152 for it. Harmless today only because `_best_margin`
+    skips SUPPRESS explicitly; a single future caller that did not would be
+    comparing a real action against a number with no meaning.
+
+    Zeroed here rather than filtered before prediction so that the rule-based
+    scorers and the model-backed ones agree on the same invariant, and so the
+    key set stays complete for callers that index it.
+    """
+    return {
+        key: (0.0 if key[1] == ActionKind.SUPPRESS.value else value)
+        for key, value in scores.items()
+    }
 
 
 class ConstantScorer:

@@ -125,7 +125,16 @@ def test_history_cli_contains_no_truncate(conn):
     import yukti_datagen.history_cli as mod
 
     source = pathlib.Path(mod.__file__).read_text()
-    assert "TRUNCATE" not in source.upper(), (
+
+    # Comments are stripped first. The module explains at length why it must
+    # NOT truncate, and a naive grep flags that explanation — which would make
+    # the guard fire on the documentation of the bug rather than the bug, and
+    # the natural fix would be to delete the explanation.
+    code = "\n".join(
+        line for line in source.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "TRUNCATE" not in code.upper(), (
         "history_cli truncates again — it would take the consumer's planning "
         "cases with it, and processed_event makes them unrecoverable"
     )

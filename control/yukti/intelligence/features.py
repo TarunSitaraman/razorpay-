@@ -96,6 +96,12 @@ SELECT c.id                          AS case_id,
        WHERE obligation_id = o.id AND status = 'failed'
        ORDER BY attempted_at DESC LIMIT 1
   ) a ON true
+ -- Deterministic order. Without it a LIMITed frame is an arbitrary sample, and
+ -- arbitrary here is not merely unstable: it returned 2,000 treated rows and
+ -- ZERO control rows, which would train an uplift model with no counterfactual
+ -- arm at all. Case ids are ULIDs, so this is chronological and both arms
+ -- interleave.
+ ORDER BY c.id
 """
 
 
@@ -262,6 +268,14 @@ SELECT c.id                          AS case_id,
  WHERE c.state IN ('open', 'planning')
    AND c.merchant_id = %(merchant_id)s
    AND c.opened_at <= %(as_of)s
+ -- Deterministic order, which a LIMIT makes load-bearing rather than cosmetic.
+ -- Without it Postgres returns an arbitrary subset and two runs at the same
+ -- planning moment consider DIFFERENT cases — so `plan_cycle` stops being the
+ -- pure function of database state the whole crash-resume and replay story
+ -- depends on. It showed up as a re-run "dispatching 601 more actions", which
+ -- looks like an idempotency failure and is not one.
+ -- Case ids are ULIDs, so this is also chronological.
+ ORDER BY c.id
 """
 
 

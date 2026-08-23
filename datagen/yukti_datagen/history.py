@@ -90,7 +90,12 @@ class HistoricalTreatment:
     scheduled_for: datetime
     discount_pct: float
     cost_paise: int
+    # What the offer was worth. Describes the intervention, so it is safe as a
+    # feature and is what the allocator prices against.
     discount_paise: int
+    # What the merchant actually gave away — zero unless the case recovered.
+    # An OUTCOME, never a feature; used only for realised-margin accounting.
+    realised_discount_paise: int
     recovered: bool
     opted_out: bool
     recovered_paise: int
@@ -184,10 +189,30 @@ def run_exploration(
         if iv.kind.contacts_customer:
             recent.append(at)
 
-        discount_paise = (
+        # What was OFFERED, not what was ultimately given away.
+        #
+        # This previously recorded the discount only when the case recovered,
+        # which is economically true — a discount costs nothing if the customer
+        # never pays — and catastrophic as a feature. `discount_paise > 0` then
+        # predicted recovery with 100% accuracy (1,936 of 1,936 rows), so any
+        # model allowed to see the column learned the outcome instead of the
+        # effect.
+        #
+        # It hid for two days because TLearner and XLearner strip the action
+        # columns from both arms. Only ActionConditionalUplift keeps them — that
+        # is the entire point of it — and it found the leak immediately, scoring
+        # a 5% discount at +0.92 uplift while every other action scored negative.
+        #
+        # The offered amount is also the right number for the decision: the
+        # allocator subtracts discount in full because it must commit the money
+        # before knowing whether it lands. Realised spend is an accounting
+        # question for the evaluation, computed from the outcome, not a feature.
+        offered_discount_paise = (
             int(round(case["amount_paise"] * iv.discount_pct / 100.0))
-            if outcome.recovered and iv.discount_pct
-            else 0
+            if iv.discount_pct else 0
+        )
+        realised_discount_paise = (
+            offered_discount_paise if outcome.recovered else 0
         )
 
         out.append(
@@ -201,7 +226,8 @@ def run_exploration(
                 scheduled_for=iv.at,
                 discount_pct=iv.discount_pct,
                 cost_paise=CHANNEL_COST_PAISE[iv.channel] if iv.kind.contacts_customer else 0,
-                discount_paise=discount_paise,
+                discount_paise=offered_discount_paise,
+                realised_discount_paise=realised_discount_paise,
                 recovered=outcome.recovered,
                 opted_out=outcome.opted_out,
                 recovered_paise=outcome.recovered_paise,
