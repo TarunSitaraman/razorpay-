@@ -69,7 +69,7 @@ from yukti.policy.merchantpack import MerchantContext, MerchantPolicy
 from yukti.policy.regpack import ActionRequest
 from yukti.policy.store import load_policy
 from yukti.scoring import Scorer, default_scorer, key_for
-from yukti.stopping.rules import CaseSnapshot
+from yukti.stopping.rules import MIN_EXPECTED_MARGIN_PAISE, CaseSnapshot
 from yukti.stopping.rules import evaluate as evaluate_stopping
 
 # Per-customer contact cap across every open case on every surface. Taken from
@@ -168,7 +168,8 @@ def plan_cycle(
     budgets = budget_ledger.load_all(conn, merchant_id, as_of.date())
     survivors: list[str] = []
     for cid, case in by_case.items():
-        best = _best_margin(case, proposals[cid], uplift)
+        best = _best_margin(case, proposals[cid], uplift,
+                            budgets["discount"].remaining)
         snapshot = _snapshot(case, policy, budgets, best, as_of)
         decision = evaluate_stopping(snapshot, as_of)
         if decision.stop:
@@ -314,41 +315,91 @@ def _margin(case: dict, cand: Candidate, uplift: dict[tuple, float]) -> int:
     )
 
 
-def _best_margin(
-    case: dict, cands: list[Candidate], uplift: dict[tuple, float]
-) -> tuple[float, int, bool]:
-    """The best action available for this case, before any budget is applied.
+@dataclass(frozen=True, slots=True)
+class BestOption:
+    """The best thing we could do for a case, and the best we can AFFORD."""
 
-    The stopping rules need to know what the case is worth at its best, not on
-    average. A case whose cheapest option is unprofitable but whose best option
-    clears the floor should not be stopped for negative margin.
+    uplift: float
+    margin_paise: int
+    # True only when the discount budget is the thing standing between us and a
+    # worthwhile action — not merely because some discount candidate existed.
+    blocked_on_discount_budget: bool
+
+
+def _best_margin(
+    case: dict, cands: list[Candidate], uplift: dict[tuple, float],
+    discount_remaining_paise: int,
+) -> BestOption:
+    """What this case is worth, given what the merchant can currently afford.
+
+    Affordability is applied HERE rather than left to the allocator, because the
+    stopping rules run first and they need to judge the case on options that
+    actually exist. The first live run made the cost of getting this wrong
+    obvious: a merchant with no discount budget had 346 of 442 cases stopped as
+    DISCOUNT_BUDGET_SPENT, because the highest-margin candidate happened to be a
+    discount and the rule killed the whole case — discarding the free silent
+    retry sitting right next to it.
+
+    So two figures are computed. The affordable best is what the stopping rules
+    judge. The unconstrained best exists only to tell two stops apart:
+
+        "your discount budget ran out and nothing else was worth doing"
+            -> DISCOUNT_BUDGET_SPENT, and raising the budget would change it
+        "nothing was worth doing at all"
+            -> NEGATIVE_EXPECTED_MARGIN, and no budget would change it
+
+    A merchant can act on the first and should not waste time on the second, so
+    collapsing them into one reason would make the console actively misleading.
     """
-    best_margin = 0
-    best_uplift = 0.0
-    needs_discount = False
+    best_affordable = 0
+    best_affordable_uplift = 0.0
+    best_unconstrained = 0
+    best_unconstrained_needs_discount = False
+
     for c in cands:
         if c.action_kind is ActionKind.SUPPRESS:
             continue
         m = _margin(case, c, uplift)
-        if m > best_margin:
-            best_margin = m
-            best_uplift = uplift.get(key_for(c), 0.0)
-            needs_discount = c.discount_paise > 0
-    if best_margin == 0:
-        best_uplift = max(
+
+        if m > best_unconstrained:
+            best_unconstrained = m
+            best_unconstrained_needs_discount = c.discount_paise > 0
+
+        if c.discount_paise > discount_remaining_paise:
+            continue
+        if m > best_affordable:
+            best_affordable = m
+            best_affordable_uplift = uplift.get(key_for(c), 0.0)
+
+    if best_affordable == 0:
+        # Nothing cleared zero. Report the best uplift we saw anyway, so
+        # LOST_CAUSE can distinguish "no causal effect" from "effect exists but
+        # costs more than it returns" — those are different problems.
+        best_affordable_uplift = max(
             (uplift.get(key_for(c), 0.0) for c in cands
              if c.action_kind is not ActionKind.SUPPRESS),
             default=0.0,
         )
-    return best_uplift, best_margin, needs_discount
+
+    blocked_on_discount = (
+        best_affordable < MIN_EXPECTED_MARGIN_PAISE
+        and best_unconstrained >= MIN_EXPECTED_MARGIN_PAISE
+        and best_unconstrained_needs_discount
+    )
+
+    return BestOption(
+        uplift=best_affordable_uplift,
+        margin_paise=best_affordable,
+        blocked_on_discount_budget=blocked_on_discount,
+    )
 
 
 # --- adapters between component vocabularies --------------------------------
 
 def _snapshot(
-    case: dict, policy: MerchantPolicy, budgets: dict, best: tuple, as_of: datetime
+    case: dict, policy: MerchantPolicy, budgets: dict, best: BestOption,
+    as_of: datetime
 ) -> CaseSnapshot:
-    best_uplift, best_margin, needs_discount = best
     return CaseSnapshot(
         case_id=case["case_id"],
         obligation_state=ObligationState(case.get("obligation_state", "open")),
@@ -362,9 +413,10 @@ def _snapshot(
         contact_cap=policy.max_contacts_per_customer_per_week,
         contact_budget_remaining=budgets["contact"].remaining,
         discount_budget_remaining_paise=budgets["discount"].remaining,
-        predicted_uplift=best_uplift,
-        expected_margin_paise=best_margin,
-        requires_discount=needs_discount,
+        predicted_uplift=best.uplift,
+        expected_margin_paise=best.margin_paise,
+        # Only true when the discount budget is what is actually blocking us.
+        requires_discount=best.blocked_on_discount_budget,
     )
 
 

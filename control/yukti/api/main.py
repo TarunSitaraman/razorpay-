@@ -104,6 +104,63 @@ def failure_mix(merchant_id: str | None = Query(None)) -> list[dict]:
     return rows
 
 
+@app.get("/decisions")
+def decisions(
+    merchant_id: str | None = Query(None), limit: int = Query(50, le=500)
+) -> list[dict]:
+    """The live decision feed: what was chosen, and what was turned down."""
+    rows = _q(queries.recent_decisions, merchant_id, limit)
+    for r in rows:
+        r["display"] = format_inr(r["amount_paise"])
+        r["margin_display"] = format_inr(r["expected_incr_margin_paise"] or 0)
+    return rows
+
+
+@app.get("/metrics/policy")
+def policy_metrics(merchant_id: str | None = Query(None)) -> list[dict]:
+    """Blocks and escalations by named rule — "the agent wanted this; this stopped it"."""
+    rows = _q(queries.policy_breakdown, merchant_id)
+    for r in rows:
+        r["display"] = format_inr(r["amount_paise"])
+    return rows
+
+
+@app.get("/metrics/budgets")
+def budget_metrics(
+    merchant_id: str | None = Query(None), window: str | None = Query(None)
+) -> list[dict]:
+    from datetime import date as _date
+
+    parsed = _date.fromisoformat(window) if window else None
+    rows = _q(queries.budget_state, merchant_id, parsed)
+    for r in rows:
+        if r["kind"] == "discount":
+            r["display"] = format_inr(r["consumed_val"])
+            r["limit_display"] = format_inr(r["limit_val"])
+        else:
+            r["display"] = f"{r['consumed_val']:,}"
+            r["limit_display"] = f"{r['limit_val']:,}"
+    return rows
+
+
+@app.get("/metrics/not-chased")
+def not_chased(merchant_id: str | None = Query(None)) -> dict:
+    """Money deliberately not pursued, split by why.
+
+    Stopped and not-funded are reported apart because they mean different
+    things: one is a decision that this money is not worth chasing, the other is
+    a budget that ran out with the case still open.
+    """
+    result = _q(queries.money_not_chased, merchant_id)
+    for r in result["stopped_by_rule"]:
+        r["display"] = format_inr(r["amount_paise"])
+    result["stopped_total_display"] = format_inr(result["stopped_total_paise"])
+    result["considered_not_funded_display"] = format_inr(
+        result["considered_not_funded_paise"]
+    )
+    return result
+
+
 @app.get("/cases")
 def cases(
     merchant_id: str | None = Query(None), limit: int = Query(50, le=500)

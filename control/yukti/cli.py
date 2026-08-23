@@ -178,6 +178,101 @@ def audit_verify(
         raise typer.Exit(1)
 
 
+@app.command("reset-planning")
+def reset_planning(
+    merchant: str = typer.Option(None, help="Merchant id; omit for every merchant"),
+    confirm: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+) -> None:
+    """Undo PLANNING output: reopen planned cases, clear their decisions and actions.
+
+    A development affordance for re-running a cycle after changing the logic, not
+    an operational tool — in production a decision that was made is a fact, and
+    the audit trail exists precisely so it cannot be quietly withdrawn.
+
+    **It must never touch the exploration history.** Those cases carry the
+    randomised treatment assignment that identifies uplift, and they live in the
+    same tables as planning output. An earlier version of this command reopened
+    them: 2,156 exploration cases lost their `agent_decision` and
+    `recovery_action` rows while keeping their outcomes, which would have made
+    every one of them read as a CONTROL row that recovered — silently poisoning
+    the RCT rather than breaking anything visibly.
+
+    Two independent guards, because one is a single edit away from being wrong:
+
+      1. `agent_run.kind = 'planner'` — exploration decisions are written by the
+         generator with a NULL run_id, so only planning rows match.
+      2. a case with a `recovery_outcome` row is finished history and is never
+         reopened, whatever else is true of it.
+
+    The audit chain is truncated WHOLE for the merchant rather than edited.
+    Deleting rows out of the middle is exactly the tampering `audit.verify`
+    detects, and leaving a knowingly-broken chain behind would train us to
+    ignore the one signal that matters.
+    """
+    from rich.console import Console
+
+    from yukti.store.db import connect
+
+    console = Console()
+    if not confirm and not typer.confirm(
+        f"Discard planning output for {merchant or 'EVERY merchant'}?"
+    ):
+        raise typer.Abort()
+
+    merchant_filter = "AND c.merchant_id = %(merchant)s" if merchant else ""
+    params = {"merchant": merchant}
+
+    # Cases this command is allowed to touch: planned by a planner run, and not
+    # part of the finished exploration history.
+    planned_cases = f"""
+        SELECT DISTINCT c.id
+          FROM recovery_case c
+          JOIN agent_decision d ON d.case_id = c.id
+          JOIN agent_run r      ON r.id = d.run_id AND r.kind = 'planner'
+         WHERE NOT EXISTS (SELECT 1 FROM recovery_outcome o WHERE o.case_id = c.id)
+           {merchant_filter}
+    """
+
+    with connect() as conn:
+        conn.execute("CREATE TEMP TABLE _planned ON COMMIT DROP AS " + planned_cases,
+                     params)
+        counts = {}
+        counts["recovery_action"] = conn.execute(
+            "DELETE FROM recovery_action WHERE decision_id IN "
+            "(SELECT d.id FROM agent_decision d JOIN agent_run r ON r.id = d.run_id "
+            "  WHERE r.kind = 'planner' AND d.case_id IN (SELECT id FROM _planned))"
+        ).rowcount
+        counts["policy_evaluation"] = conn.execute(
+            "DELETE FROM policy_evaluation WHERE decision_id IN "
+            "(SELECT id FROM agent_decision WHERE run_id IS NOT NULL "
+            "   AND case_id IN (SELECT id FROM _planned))"
+        ).rowcount
+        counts["agent_decision"] = conn.execute(
+            "DELETE FROM agent_decision WHERE run_id IS NOT NULL "
+            "  AND case_id IN (SELECT id FROM _planned)"
+        ).rowcount
+        counts["reopened"] = conn.execute(
+            "UPDATE recovery_case SET state = 'open', stop_reason = NULL, "
+            "       closed_at = NULL, version = version + 1 "
+            " WHERE id IN (SELECT id FROM _planned) AND state <> 'open'"
+        ).rowcount
+
+        where_m = "WHERE merchant_id = %(merchant)s" if merchant else ""
+        counts["agent_run"] = conn.execute(
+            f"DELETE FROM agent_run {where_m + ' AND' if where_m else 'WHERE'} "
+            f"kind = 'planner'", params).rowcount
+        counts["audit_event"] = conn.execute(
+            f"DELETE FROM audit_event {where_m}", params).rowcount
+        counts["outbox"] = conn.execute(
+            "DELETE FROM outbox WHERE published_at IS NULL").rowcount
+        conn.execute(f"UPDATE budget_ledger SET consumed_val = 0 {where_m}", params)
+        conn.commit()
+
+    for table, n in counts.items():
+        if n:
+            console.print(f"  {table:20} {n:,}")
+
+
 @app.command("seed-policy")
 def seed_policy() -> None:
     """Give every merchant an active policy pack from its segment defaults."""

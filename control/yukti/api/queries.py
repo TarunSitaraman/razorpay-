@@ -7,6 +7,7 @@ an ORM that might emit a join I did not intend.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -184,3 +185,155 @@ def failure_mix(conn: psycopg.Connection, merchant_id: str | None = None) -> lis
         params,
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def recent_decisions(
+    conn: psycopg.Connection, merchant_id: str | None = None, limit: int = 50
+) -> list[dict]:
+    """The decision feed — what the planner chose, and what it turned down.
+
+    `alternatives_rejected` is the column that makes this worth showing. Every
+    other recovery product can tell a merchant what it did; this can tell them
+    what it declined to do and which rule declined it, which is the difference
+    between a log and an explanation.
+    """
+    where = ""
+    params: list[Any] = []
+    if merchant_id:
+        where = "WHERE c.merchant_id = %s"
+        params.append(merchant_id)
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT d.id, d.case_id, d.trace_id, d.action_kind, d.channel,
+               d.scheduled_for, d.reason, d.confidence,
+               d.expected_incr_margin_paise, d.policy_verdict,
+               d.alternatives_rejected, d.created_at,
+               c.arm, c.state AS case_state, c.stop_reason,
+               o.kind AS obligation_kind, o.amount_paise,
+               act.status AS action_status, act.cost_paise, act.discount_paise
+          FROM agent_decision d
+          JOIN recovery_case c ON c.id = d.case_id
+          JOIN obligation o    ON o.id = c.obligation_id
+          LEFT JOIN recovery_action act ON act.decision_id = d.id
+          -- Planning decisions only. The exploration history lives in the same
+          -- table with a NULL run_id, and showing a merchant a randomised probe
+          -- from the training period as if it were a live decision would be
+          -- straightforwardly misleading.
+         WHERE d.run_id IS NOT NULL
+           {where.replace('WHERE', 'AND') if where else ''}
+         ORDER BY d.created_at DESC, d.id DESC
+         LIMIT %s
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def policy_breakdown(
+    conn: psycopg.Connection, merchant_id: str | None = None
+) -> list[dict]:
+    """Which rules fired, how often, and on how much money.
+
+    Grouped by pack so the three kinds of "no" stay distinguishable: a
+    regulatory block, a merchant limit, and a business stopping rule are
+    different conversations with the merchant.
+    """
+    where = ""
+    params: list[Any] = []
+    if merchant_id:
+        where = "AND c.merchant_id = %s"
+        params.append(merchant_id)
+    rows = conn.execute(
+        f"""
+        SELECT pe.pack, pe.rule_id, pe.verdict,
+               count(*)                                  AS n,
+               coalesce(sum(o.amount_paise), 0)::bigint   AS amount_paise
+          FROM policy_evaluation pe
+          JOIN agent_decision d ON d.id = pe.decision_id
+          JOIN recovery_case c  ON c.id = d.case_id
+          JOIN obligation o     ON o.id = c.obligation_id
+         WHERE pe.verdict <> 'allow'
+           {where}
+         GROUP BY pe.pack, pe.rule_id, pe.verdict
+         ORDER BY n DESC
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def budget_state(
+    conn: psycopg.Connection, merchant_id: str | None = None,
+    window: date | None = None,
+) -> list[dict]:
+    """Authorised against consumed, for the draining-budget panel."""
+    where = "WHERE b.window_start = %s"
+    params: list[Any] = [window or date.today()]
+    if merchant_id:
+        where += " AND b.merchant_id = %s"
+        params.append(merchant_id)
+    rows = conn.execute(
+        f"""
+        SELECT b.merchant_id, m.name, b.kind, b.window_start,
+               b.limit_val, b.consumed_val,
+               greatest(0, b.limit_val - b.consumed_val) AS remaining
+          FROM budget_ledger b
+          JOIN merchant m ON m.id = b.merchant_id
+          {where}
+         ORDER BY m.name, b.kind
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def money_not_chased(
+    conn: psycopg.Connection, merchant_id: str | None = None
+) -> dict[str, Any]:
+    """The headline the brief asks for, framed the way it should be read.
+
+    Two different things are reported separately and must not be added together:
+    money we STOPPED on (a named rule says this is not worth working) and money
+    we merely did not FUND this cycle (the budget went further elsewhere, and the
+    case is still open tomorrow). Summing them would overstate what the system
+    walked away from.
+    """
+    where = ""
+    params: list[Any] = []
+    if merchant_id:
+        where = "AND c.merchant_id = %s"
+        params.append(merchant_id)
+
+    stopped = conn.execute(
+        f"""
+        SELECT c.stop_reason,
+               count(*)                                 AS cases,
+               coalesce(sum(o.amount_paise), 0)::bigint  AS amount_paise
+          FROM recovery_case c
+          JOIN obligation o ON o.id = c.obligation_id
+         WHERE c.state = 'stopped' {where}
+         GROUP BY c.stop_reason
+         ORDER BY amount_paise DESC
+        """,
+        params,
+    ).fetchall()
+
+    unfunded = conn.execute(
+        f"""
+        SELECT count(*)                                 AS cases,
+               coalesce(sum(o.amount_paise), 0)::bigint  AS amount_paise
+          FROM recovery_case c
+          JOIN obligation o     ON o.id = c.obligation_id
+          JOIN agent_decision d ON d.case_id = c.id AND d.run_id IS NOT NULL
+         WHERE c.state = 'open' AND d.action_kind = 'suppress' {where}
+        """,
+        params,
+    ).fetchone()
+
+    return {
+        "stopped_by_rule": [dict(r) for r in stopped],
+        "stopped_total_paise": sum(r["amount_paise"] for r in stopped),
+        "considered_not_funded_paise": int(unfunded["amount_paise"]),
+        "considered_not_funded_cases": int(unfunded["cases"]),
+    }

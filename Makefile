@@ -10,7 +10,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help up down status reset venv install migrate seed history replay replay-fast train plan replay-webhooks edge services services-down outbox eval demo test lint fmt clean
+.PHONY: help up down status reset venv install migrate seed history replay replay-fast train plan replay-webhooks edge services services-down outbox eval demo test lint fmt clean audit seed-policy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -63,6 +63,22 @@ services: edge ## Start ingest-gw, sandbox and console API
 
 services-down: ## Stop ingest-gw, sandbox and console API
 	@./scripts/local/services.sh down
+
+train: ## Fit the intelligence models, run the gate, persist for serving
+	@$(PY) -m yukti.intelligence.cli train --save
+
+seed-policy: ## Give every merchant an active policy pack from its segment defaults
+	@$(PY) -m yukti.cli seed-policy
+
+plan: ## Run one planning cycle (MERCHANT=<id> DATE=<iso> optional)
+	@$(PY) -m yukti.cli plan \
+	  $(if $(MERCHANT),--merchant $(MERCHANT)) \
+	  $(if $(DATE),--date $(DATE)) \
+	  $(if $(LIMIT),--limit $(LIMIT)) \
+	  $(if $(DRY_RUN),--dry-run)
+
+audit: ## Verify the audit hash chain for every merchant
+	@$(PY) -m yukti.cli audit-verify
 
 consume: ## Consume payment events into recovery cases
 	@$(PY) -m yukti.cli consume

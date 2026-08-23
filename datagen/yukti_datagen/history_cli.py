@@ -138,8 +138,30 @@ def build(days: int = 14, exploration_share: float = EXPLORATION_SHARE) -> dict[
         # Persist as real recovery_case / decision / action / outcome rows, so
         # the feature frame reads the same tables in training and in serving.
         # Anything else is training/serving skew waiting to happen.
-        conn.execute("TRUNCATE recovery_outcome, recovery_action, policy_evaluation, "
-                     "agent_decision, agent_run, recovery_case RESTART IDENTITY CASCADE")
+        # Delete only what THIS command produces, not every recovery case.
+        #
+        # A TRUNCATE here is wrong in a way that is invisible until you try to
+        # recover from it: the consumer's planning cases live in the same table,
+        # TRUNCATE takes them too, and they cannot be rebuilt by re-consuming
+        # because `processed_event` still records those events as handled. The
+        # dedup layer is doing its job correctly — the events WERE processed —
+        # so re-running the consumer reports 345,413 duplicates and opens
+        # nothing, and the planning window is simply gone.
+        #
+        # Exploration cases are identifiable: they are the ones with an outcome.
+        # Nothing else in the system writes a recovery_outcome at case-creation
+        # time, and planning cases have none until a payment actually lands.
+        exploration = """
+            SELECT c.id FROM recovery_case c
+             WHERE EXISTS (SELECT 1 FROM recovery_outcome o WHERE o.case_id = c.id)
+        """
+        conn.execute("CREATE TEMP TABLE _prior ON COMMIT DROP AS " + exploration)
+        conn.execute("DELETE FROM recovery_outcome WHERE case_id IN (SELECT id FROM _prior)")
+        conn.execute("DELETE FROM recovery_action  WHERE case_id IN (SELECT id FROM _prior)")
+        conn.execute("DELETE FROM policy_evaluation WHERE decision_id IN "
+                     "(SELECT id FROM agent_decision WHERE case_id IN (SELECT id FROM _prior))")
+        conn.execute("DELETE FROM agent_decision   WHERE case_id IN (SELECT id FROM _prior)")
+        conn.execute("DELETE FROM recovery_case    WHERE id IN (SELECT id FROM _prior)")
 
         for t in treatments:
             conn.execute(
