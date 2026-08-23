@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
-
 from yukti.domain.enums import ObligationState, StopReason
 from yukti.stopping.rules import (
     DIMINISHING_RETURNS_DAYS,
