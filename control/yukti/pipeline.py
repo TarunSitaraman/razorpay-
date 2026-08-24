@@ -242,7 +242,7 @@ def plan_cycle(
         per_customer_contacts=DEFAULT_PER_CUSTOMER_CONTACTS,
     ))
     result.optimality_ratio = allocation.optimality_ratio
-    result.planned_margin_paise = allocation.total_margin_paise
+    result.planned_margin_paise = allocation.planned_margin_paise
 
     chosen = {
         c.case_id: index[(c.case_id, c.action_kind, c.channel,
@@ -358,6 +358,11 @@ class BestOption:
     # True only when the discount budget is the thing standing between us and a
     # worthwhile action — not merely because some discount candidate existed.
     blocked_on_discount_budget: bool
+    # Whether a costless, never-seen-by-the-customer action (a silent retry) is
+    # among the candidates. It keeps NEGATIVE_EXPECTED_MARGIN from closing a
+    # case that still has a free option on the table — the same mistake the
+    # discount affordability bug above made, one rule over.
+    has_costless_action: bool = False
 
 
 def _best_margin(
@@ -389,10 +394,13 @@ def _best_margin(
     best_affordable_uplift = 0.0
     best_unconstrained = 0
     best_unconstrained_needs_discount = False
+    has_costless = False
 
     for c in cands:
         if c.action_kind is ActionKind.SUPPRESS:
             continue
+        if _is_costless_and_unseen(c):
+            has_costless = True
         m = _margin(case, c, uplift)
 
         if m > best_unconstrained:
@@ -425,6 +433,24 @@ def _best_margin(
         uplift=best_affordable_uplift,
         margin_paise=best_affordable,
         blocked_on_discount_budget=blocked_on_discount,
+        has_costless_action=has_costless,
+    )
+
+
+def _is_costless_and_unseen(c: Candidate) -> bool:
+    """A silent retry: spends nothing, and the customer never learns of it.
+
+    Mirrors `allocator.lagrangian._is_costless_and_unseen`, on the pipeline's own
+    Candidate type. Both key on `ActionKind.contacts_customer`, which is also
+    what the outcome oracle gates its negative-effect branches on, so the three
+    cannot drift apart.
+    """
+    return (
+        not c.action_kind.contacts_customer
+        and c.action_kind not in {ActionKind.SUPPRESS, ActionKind.ESCALATE}
+        and c.contacts == 0
+        and c.discount_paise == 0
+        and CHANNEL_COST_PAISE.get(c.channel, 0) == 0
     )
 
 
@@ -451,6 +477,7 @@ def _snapshot(
         expected_margin_paise=best.margin_paise,
         # Only true when the discount budget is what is actually blocking us.
         requires_discount=best.blocked_on_discount_budget,
+        has_costless_action=best.has_costless_action,
     )
 
 
@@ -639,9 +666,16 @@ def _act(
     # "treated cases versus cases nobody looked at".
     arm = Arm(case.get("arm", "treatment"))
     if arm is Arm.HOLDOUT:
+        # HELD_OUT, not SCHEDULED. The decision row above deliberately records
+        # the action we WOULD have taken, which is what lets the console show
+        # the counterfactual — but that makes the row easy to misread as
+        # something that happened. It was: the evaluation harness scored these
+        # cases from `agent_decision.action_kind` and so credited the holdout
+        # with 213 treatments it never received, quietly corrupting the one
+        # denominator every lift number in the project is measured against.
         conn.execute(
             "UPDATE recovery_case SET state = %s, version = version + 1 WHERE id = %s",
-            (CaseState.SCHEDULED.value, case["case_id"]),
+            (CaseState.HELD_OUT.value, case["case_id"]),
         )
         audit.append(conn, trace_id=tid, merchant_id=case["merchant_id"],
                      action="case.held_out", actor=ActorKind.SYSTEM,

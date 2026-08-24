@@ -30,11 +30,20 @@ class StaleEvent(ValueError):
 _CASE_TRANSITIONS: dict[CaseState, frozenset[CaseState]] = {
     CaseState.OPEN: frozenset(
         {CaseState.PLANNING, CaseState.SCHEDULED, CaseState.ESCALATED,
-         CaseState.AWAITING_OUTCOME, CaseState.STOPPED, CaseState.RECOVERED}
+         CaseState.AWAITING_OUTCOME, CaseState.HELD_OUT, CaseState.STOPPED,
+         CaseState.RECOVERED}
     ),
     CaseState.PLANNING: frozenset(
-        {CaseState.SCHEDULED, CaseState.ESCALATED, CaseState.STOPPED,
-         CaseState.RECOVERED}
+        {CaseState.SCHEDULED, CaseState.ESCALATED, CaseState.HELD_OUT,
+         CaseState.STOPPED, CaseState.RECOVERED}
+    ),
+    # Deliberately NOT terminal, and it never leads to ACTING. The whole value
+    # of a holdout is watching what happens without us, so the organic outcomes
+    # must still be observable — a terminal holdout would discard the very
+    # measurement it exists to take. A later cycle may re-plan it (and hold it
+    # out again), which is why PLANNING is reachable.
+    CaseState.HELD_OUT: frozenset(
+        {CaseState.PLANNING, CaseState.STOPPED, CaseState.RECOVERED, CaseState.LOST}
     ),
     CaseState.SCHEDULED: frozenset(
         {CaseState.ACTING, CaseState.PLANNING, CaseState.ESCALATED,

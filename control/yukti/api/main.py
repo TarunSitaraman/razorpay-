@@ -8,12 +8,16 @@ would be exactly the failure mode the whole design exists to prevent.
 
 from __future__ import annotations
 
+import json
+import pathlib
 from contextlib import asynccontextmanager
 from typing import Any
 
 import psycopg_pool
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from yukti.api import queries
 from yukti.config import settings
@@ -39,6 +43,36 @@ app = FastAPI(title="Yukti", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+# The console is a static page that reads these same JSON endpoints. No template
+# engine and no build step: `make demo` has to work from a cold clone, and a
+# toolchain that must install before anything renders is the thing that fails in
+# front of an audience. It also means a number is computed in exactly one place —
+# a server-side template would be free to drift from the API serving it.
+STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def console() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/metrics/lift")
+def lift() -> dict:
+    """The five-arm comparison, read from the last `make eval`.
+
+    Served from disk rather than computed on request: a five-arm run takes
+    minutes, and an HTTP handler that could take minutes is not a handler.
+    Reading the file the CLI wrote also guarantees the console shows the same
+    number the CLI printed, rather than a second computation free to disagree.
+    """
+    from yukti.eval.report import EXPORT_PATH
+
+    if not EXPORT_PATH.exists():
+        raise HTTPException(
+            404, "no evaluation on disk yet — run `make eval` to produce one")
+    return json.loads(EXPORT_PATH.read_text())
 
 
 def _q(fn, *args, **kwargs) -> Any:

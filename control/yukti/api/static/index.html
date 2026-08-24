@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yukti — recovery console</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <h1>Yukti</h1>
+  <span class="tag">the recovery agent that knows when to stop</span>
+  <select id="merchant"></select>
+</header>
+
+<main>
+
+<!-- Beat 1: the problem, across all four surfaces at once. -->
+<section id="risk">
+  <h2>Revenue at risk</h2>
+  <p class="note">
+    Four kinds of revenue leak — failed payments, abandoned carts, failed
+    subscriptions, overdue invoices. Four separate tools today. One customer.
+  </p>
+  <div class="tiles" id="risk-tiles"></div>
+  <div class="bars" id="risk-bars" style="margin-top:1rem"></div>
+</section>
+
+<!-- Beat 11: the headline. Gross and net are separate charts on purpose: two
+     measures of different scale never share an axis. -->
+<section id="lift">
+  <h2>Measured money — five arms, identical cases</h2>
+  <p class="note">
+    Every arm runs the same allocator, stopping rules and policy engine. Only the
+    number being optimised changes, so any difference is the objective and never
+    the plumbing. The arm that recovers the most is not the arm that earns the most.
+  </p>
+  <div id="lift-body"><p class="empty">Run <code>make eval</code> to produce this.</p></div>
+</section>
+
+<!-- Beat 7: stopping rules, by name, with the money deliberately not chased. -->
+<section id="stopping">
+  <h2>Stopping rules — work deliberately not done</h2>
+  <p class="note">
+    Stopped and not-funded are reported apart. One is a decision that this money
+    is not worth chasing; the other is a budget that ran out with the case still
+    open. Adding them would overstate what the system walked away from.
+  </p>
+  <div class="tiles" id="notchased-tiles"></div>
+  <div class="bars" id="stopping-bars" style="margin-top:1rem"></div>
+</section>
+
+<!-- Beat 6: the budget draining. -->
+<section id="budgets">
+  <h2>Budgets</h2>
+  <p class="note">
+    Hard limits, enforced by the database rather than by arithmetic. A per-customer
+    cap applies across every surface — which is what a per-agent budget cannot see.
+  </p>
+  <div class="tiles" id="budget-tiles"></div>
+</section>
+
+<!-- Beat 8: the agent wanted to; policy said no. -->
+<section id="policy">
+  <h2>Policy — what was blocked, and by which rule</h2>
+  <div id="policy-body"></div>
+</section>
+
+<!-- Beats 5 & 6: the live decision feed with rejected alternatives. -->
+<section id="decisions">
+  <h2>Decision feed</h2>
+  <p class="note">
+    Every other recovery product can tell a merchant what it did. This one can
+    tell them what it declined to do, and which rule declined it.
+  </p>
+  <div id="decisions-body"></div>
+</section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

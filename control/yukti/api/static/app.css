@@ -1,0 +1,160 @@
+/* Yukti console.
+ *
+ * Palette slots and surfaces come from the validated reference instance rather
+ * than being picked by eye. Roles are declared once here and referenced by name
+ * throughout, so the light/dark values swap in one place.
+ *
+ * Dark values are declared under BOTH the media query and the [data-theme]
+ * scope: the query covers the OS setting, the attribute covers the toggle, and
+ * the :not() guard lets an explicit light choice beat OS-dark.
+ */
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --surface-2: #f4f3f0;
+  --border:    #e2e1dc;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #79776f;
+
+  --series-1: #2a78d6;   /* blue   — the default single series */
+  --series-2: #eb6834;   /* orange — the rival, where two are compared */
+  --series-3: #1baf7a;   /* aqua   */
+
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --surface-2: #242422;
+    --border:    #383835;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8f8d83;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --surface-2: #242422;
+  --border:    #383835;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8f8d83;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 0 4rem;
+  background: var(--surface-1); color: var(--text-primary);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5;
+}
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+  padding: 0.9rem 1.5rem; display: flex; align-items: baseline; gap: 1rem;
+  flex-wrap: wrap;
+}
+header h1 { margin: 0; font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+header .tag { color: var(--text-muted); font-size: 0.8rem; }
+header select {
+  margin-left: auto; background: var(--surface-2); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.5rem;
+  font-family: inherit; font-size: 0.85rem;
+}
+main { max-width: 1180px; margin: 0 auto; padding: 1.5rem; }
+
+section { margin-bottom: 2.5rem; }
+section > h2 {
+  font-size: 0.78rem; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--text-muted);
+  margin: 0 0 0.85rem; padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+section > p.note {
+  margin: -0.4rem 0 1rem; color: var(--text-secondary); font-size: 0.85rem;
+  max-width: 68ch;
+}
+
+/* Stat tiles — a hero number is a form in its own right, not a failed chart. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.85rem; }
+.tile {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0.9rem 1rem;
+}
+.tile .label {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted); margin-bottom: 0.3rem;
+}
+.tile .value {
+  font-size: 1.55rem; font-weight: 640; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tile .sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.2rem; }
+
+/* Bars. 4px rounded data-ends anchored to the baseline; 2px gaps between fills. */
+.bars { display: flex; flex-direction: column; gap: 2px; }
+.bar-row { display: grid; grid-template-columns: 12rem 1fr auto; align-items: center; gap: 0.75rem; }
+.bar-row .name { font-size: 0.85rem; color: var(--text-secondary); text-align: right;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { background: var(--surface-2); border-radius: 4px; height: 22px; position: relative; }
+.bar-fill  { background: var(--series-1); border-radius: 4px; height: 100%;
+             min-width: 2px; transition: width .3s ease; }
+.bar-fill.rival { background: var(--series-2); }
+.bar-fill.muted { background: var(--text-muted); opacity: .5; }
+.bar-row .val { font-family: var(--mono); font-size: 0.82rem;
+                font-variant-numeric: tabular-nums; color: var(--text-primary);
+                min-width: 8.5rem; text-align: right; }
+
+/* Meters for budget consumption. */
+.meter-track { background: var(--surface-1); border: 1px solid var(--border);
+               border-radius: 4px; height: 8px; margin-top: 0.5rem; overflow: hidden; }
+.meter-fill { height: 100%; background: var(--series-1); border-radius: 4px; }
+.meter-fill.warn { background: var(--warning); }
+.meter-fill.full { background: var(--critical); }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th {
+  text-align: left; font-weight: 600; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted);
+  padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+     vertical-align: top; }
+td.num { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--surface-2); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; font-weight: 600; padding: 0.12rem 0.45rem;
+  border-radius: 5px; border: 1px solid transparent; white-space: nowrap;
+}
+/* Status never rides on colour alone — every pill carries a glyph and a word. */
+.pill.allow    { color: var(--good);     border-color: var(--good); }
+.pill.block    { color: var(--critical); border-color: var(--critical); }
+.pill.escalate { color: var(--serious);  border-color: var(--serious); }
+.pill.stop     { color: var(--warning);  border-color: var(--warning); }
+.pill.neutral  { color: var(--text-muted); border-color: var(--border); }
+
+.rejected { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.25rem; }
+.rejected code { font-family: var(--mono); font-size: 0.75rem; }
+
+.empty { color: var(--text-muted); font-style: italic; padding: 1rem 0; }
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.78rem;
+          color: var(--text-secondary); margin-bottom: 0.6rem; }
+.legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.ci { color: var(--text-muted); font-size: 0.76rem; font-family: var(--mono); }

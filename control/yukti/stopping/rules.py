@@ -65,6 +65,9 @@ class CaseSnapshot:
     predicted_uplift: float
     expected_margin_paise: int
     requires_discount: bool = False
+    # Whether a costless, never-seen action (a silent retry) remains on the
+    # table for this case. See `negative_expected_margin` for why it matters.
+    has_costless_action: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,10 +134,17 @@ def lost_cause(s: CaseSnapshot) -> StopDecision:
     if spec.transience is Transience.PERMANENT:
         return _stop(StopReason.LOST_CAUSE,
                      f"{spec.code} is permanent; no action can recover this")
-    if s.predicted_uplift < LOST_CAUSE_UPLIFT:
+    if s.predicted_uplift < LOST_CAUSE_UPLIFT and not s.has_costless_action:
         return _stop(StopReason.LOST_CAUSE,
                      f"predicted uplift {s.predicted_uplift:+.4f} is indistinguishable "
                      "from zero")
+    # A near-zero ESTIMATE on a costless, unseen action is not evidence the case
+    # is unrecoverable — it is evidence the estimator cannot resolve an effect
+    # that small. Telling a merchant their book is a lost cause on that basis
+    # reports an operational limit as a business fact, and it costs the free
+    # retry that would sometimes have worked. The permanent-decline branch above
+    # is deliberately NOT guarded: there a retry really is worthless (the oracle
+    # scores it at exactly zero) and it would burn an NPCI attempt for nothing.
     return CONTINUE
 
 
@@ -198,6 +208,14 @@ def discount_budget_spent(s: CaseSnapshot) -> StopDecision:
 
 
 def negative_expected_margin(s: CaseSnapshot) -> StopDecision:
+    if s.has_costless_action:
+        # A silent retry costs nothing and the customer never sees it, so it has
+        # no downside to weigh against — its true effect is small but never
+        # negative. That makes the margin test on it a test of the *estimate's*
+        # sign, which near zero is close to a coin flip. Stopping the case here
+        # would throw away a free option on estimator noise, so the case stays
+        # open and the allocator funds the retry.
+        return CONTINUE
     if s.expected_margin_paise < MIN_EXPECTED_MARGIN_PAISE:
         return _stop(StopReason.NEGATIVE_EXPECTED_MARGIN,
                      f"expected incremental margin {s.expected_margin_paise} paise is "

@@ -12,7 +12,12 @@ from typing import Any
 
 import psycopg
 
-LIVE_STATES = ("open", "planning", "scheduled", "acting", "awaiting_outcome")
+# `held_out` counts as live: the case was deliberately not worked, but the
+# obligation is still open and can still resolve on its own — which is the
+# entire point of holding it out. Dropping it here would quietly shrink revenue
+# at risk by the holdout share.
+LIVE_STATES = ("open", "planning", "scheduled", "acting", "awaiting_outcome",
+               "held_out")
 
 
 def revenue_at_risk(conn: psycopg.Connection, merchant_id: str | None = None) -> dict[str, Any]:

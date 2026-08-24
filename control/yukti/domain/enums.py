@@ -134,6 +134,15 @@ class CaseState(StrEnum):
     # money is still in play and the merchant still owes themselves an answer,
     # which is a different line on the console from "we chose to walk away".
     ESCALATED = "escalated"
+    # Planned in full, deliberately not acted on, because this customer is in
+    # the measurement holdout. Distinct from STOPPED on purpose: a stop is a
+    # business decision about this case and belongs in the "money we chose not
+    # to chase" metric, whereas a holdout is a measurement device that says
+    # nothing about the case's merit. Folding it into STOPPED would inflate the
+    # stopping-rules breakdown with cases nobody decided anything about, and
+    # folding it into SCHEDULED — which is what it used to do — claims an action
+    # is pending on a case that will never be acted on.
+    HELD_OUT = "held_out"
     STOPPED = "stopped"
     RECOVERED = "recovered"
     LOST = "lost"

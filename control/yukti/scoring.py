@@ -221,6 +221,39 @@ class FixedScorer:
         }
 
 
+class RetryOnlyScorer:
+    """Free retries are worth something; contacting anyone is worth nothing.
+
+    Arm B4, the reference every acting arm is measured against. Deliberately NOT
+    `ZeroScorer`: scoring everything at zero makes every case look like it has no
+    causal headroom, `lost_cause` fires on predicted-zero uplift, and the arm
+    stops its entire book and takes no action at all — which is the exact failure
+    this module's docstring warns about, and it made B4 indistinguishable from
+    the do-nothing holdout on its first run.
+
+    Zero for contacting actions is enough on its own: margin is
+    `0 x amount - channel_cost`, which is negative, so no contact is ever funded.
+    The costless silent retries are funded regardless of score by the allocator's
+    costless rule, so this arm is exactly "retry everything, contact nobody".
+    """
+
+    name = "retry_only"
+
+    def __init__(self, value: float = 0.05) -> None:
+        self.value = value
+
+    def score(self, cases, proposals):
+        out: dict[ScoreKey, float] = {}
+        for cands in proposals.values():
+            for c in cands:
+                worthless = (
+                    c.action_kind is ActionKind.SUPPRESS
+                    or c.action_kind.contacts_customer
+                )
+                out[key_for(c)] = 0.0 if worthless else self.value
+        return out
+
+
 class ZeroScorer:
     """Nothing is worth anything.
 
@@ -241,6 +274,7 @@ def default_scorer() -> Scorer:
 
 ARMS: dict[str, type] = {
     "uplift": UpliftScorer,
+    "retry_only": RetryOnlyScorer,
     "propensity": PropensityScorer,
     "reason_code": ReasonCodeScorer,
     "constant": ConstantScorer,
