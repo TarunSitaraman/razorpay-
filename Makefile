@@ -25,7 +25,13 @@ down: ## Stop the local stack
 status: ## Health of the local stack
 	@./scripts/local/stack.sh status
 
-reset: ## Wipe Kafka data, flush Redis, drop+recreate the database
+# `services-down` first, and it is not optional. The console API and the sandbox
+# hold open connections to the database, so DROP DATABASE fails with "is being
+# accessed by other users" — and it fails PARTWAY THROUGH, after Kafka has been
+# stopped and Redis flushed, leaving a half-reset stack that looks broken in a
+# new way. Running services is the normal state after `make demo`, so this hit
+# every time anyone tried to start over.
+reset: services-down ## Wipe Kafka data, flush Redis, drop+recreate the database
 	@./scripts/local/stack.sh reset
 
 venv: ## Create the Python virtualenv
@@ -100,9 +106,7 @@ eval: ## Run all baseline arms and emit the lift report
 # this reaches both `plan` and `eval`.
 demo: DATE = 2026-07-20T10:00:00
 demo: up install migrate seed history replay-fast consume train seed-policy services plan eval ## Everything, from a cold clone
-	@echo ""
-	@echo "  \033[0;36m[yukti]\033[0m ready — open http://localhost:8080"
-	@echo ""
+	@printf "\n  \033[0;36m[yukti]\033[0m ready — open http://localhost:8080\n\n"
 
 # The ordering is not arbitrary and the chain breaks if it is disturbed:
 #   seed        the synthetic world -> Postgres + Parquet
