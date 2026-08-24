@@ -158,3 +158,11 @@ tbody tr:hover { background: var(--surface-2); }
 .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .ci { color: var(--text-muted); font-size: 0.76rem; font-family: var(--mono); }
+
+/* Feed summary line. Scoped separately from section > p.note because it is
+   appended inside the table body container, not as a direct child of section. */
+.feed-note {
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+  margin: 0 0 0.6rem;
+}

@@ -266,7 +266,7 @@ def plan_cycle(
             cand = chosen.get(cid)
             if cand is None:
                 _record_suppression(conn, case, proposals[cid], uplift, tid, rid,
-                                    as_of, allocation)
+                                    as_of, allocation, policy)
                 result.suppressed += 1
                 continue
             outcome = _act(conn, dispatcher, case, cand, proposals[cid], uplift,
@@ -603,9 +603,50 @@ def _record_stop(conn, case: dict, decision, tid: str, rid: str) -> None:
                          "amount_paise": int(case["amount_paise"])})
 
 
+def _attribute_rejections(
+    case: dict, cands: list[Candidate], skip: Candidate | None,
+    uplift: dict, policy: MerchantPolicy, allocator_note: str = "",
+    limit: int = 6,
+) -> list[dict]:
+    """Say what ACTUALLY rejected each alternative, rule by rule.
+
+    Both callers used to label every alternative `rejected_by: ALLOCATOR` with
+    an expected margin, including the ones the feasibility filter had already
+    removed on regulatory grounds. On an NBFC book that is most of them — the
+    median obligation is above the RBI AFA-free ceiling, so auto-debit is simply
+    unavailable and a payment link is the only move left. The console showed
+    that as an economics decision, which is the one distinction this system is
+    built to keep straight: "we could not afford this" is not "we were not
+    allowed to do this".
+    """
+    context = _context(case, policy)
+    out: list[dict] = []
+    for c in cands:
+        if c is skip or c.action_kind is ActionKind.SUPPRESS:
+            continue
+        alt = policy_engine.evaluate(_request(c, case), policy, context)
+        blocked = [r for r in alt.results if r.verdict is PolicyVerdict.BLOCK]
+        if blocked:
+            out.append({
+                "action": c.action_kind.value, "channel": c.channel.value,
+                "rejected_by": "POLICY", "blocked_by": blocked[0].rule_id,
+                "reason": blocked[0].reason,
+            })
+        else:
+            reason = f"expected margin {_margin(case, c, uplift)} paise"
+            out.append({
+                "action": c.action_kind.value, "channel": c.channel.value,
+                "rejected_by": "ALLOCATOR",
+                "reason": reason + allocator_note,
+            })
+        if len(out) == limit:
+            break
+    return out
+
+
 def _record_suppression(
     conn, case: dict, cands: list[Candidate], uplift: dict, tid: str, rid: str,
-    as_of: datetime, allocation: Allocation,
+    as_of: datetime, allocation: Allocation, policy: MerchantPolicy,
 ) -> None:
     """Considered, and not funded. The case stays open for tomorrow.
 
@@ -613,14 +654,11 @@ def _record_suppression(
     only that today's budget went further elsewhere. Closing it would throw away
     a recoverable obligation because of a temporary constraint.
     """
-    rejected = [
-        {"action": c.action_kind.value, "channel": c.channel.value,
-         "rejected_by": "ALLOCATOR",
-         "reason": f"expected margin {_margin(case, c, uplift)} paise did not clear "
-                   f"the marginal value of a contact "
-                   f"(lambda {allocation.lambda_contact:.0f})"}
-        for c in cands if c.action_kind is not ActionKind.SUPPRESS
-    ][:6]
+    rejected = _attribute_rejections(
+        case, cands, None, uplift, policy,
+        allocator_note=(" did not clear the marginal value of a contact "
+                        f"(lambda {allocation.lambda_contact:.0f})"),
+    )
     _write_decision(
         conn, case, ActionKind.SUPPRESS, Channel.NONE, as_of,
         "not funded this cycle — budget went to higher-uplift cases",
@@ -639,13 +677,15 @@ def _act(
     verdict = policy_engine.evaluate(request, policy, _context(case, policy))
     margin = _margin(case, cand, uplift)
 
-    rejected = [
-        {"action": c.action_kind.value, "channel": c.channel.value,
-         "rejected_by": "ALLOCATOR",
-         "reason": f"expected margin {_margin(case, c, uplift)} paise"}
-        for c in all_cands
-        if c is not cand and c.action_kind is not ActionKind.SUPPRESS
-    ][:6]
+    # Attribute each rejected alternative to whatever ACTUALLY rejected it.
+    # These were all labelled "rejected_by: ALLOCATOR" with an expected margin,
+    # including the ones the feasibility filter had already removed on policy
+    # grounds — so the console showed a higher-margin silent retry sitting under
+    # a lower-margin message, apparently declined on economics, when it had in
+    # fact been blocked by a rule. That collapses "we could not afford this"
+    # into "we were not allowed to do this", which is the one distinction this
+    # system exists to keep straight.
+    rejected = _attribute_rejections(case, all_cands, cand, uplift, policy)
     rejected.extend(
         {"action": cand.action_kind.value, "channel": cand.channel.value,
          "blocked_by": r.rule_id, "reason": r.reason}

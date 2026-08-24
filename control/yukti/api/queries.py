@@ -227,7 +227,11 @@ def recent_decisions(
           -- straightforwardly misleading.
          WHERE d.run_id IS NOT NULL
            {where.replace('WHERE', 'AND') if where else ''}
-         ORDER BY d.created_at DESC, d.id DESC
+         -- Funded actions first, then suppressions, each newest-first. A cycle
+         -- suppresses far more cases than it funds, and they are written last,
+         -- so a plain chronological page was returning 25 suppressions and none
+         -- of the actions -- the feed showed nothing the system actually did.
+         ORDER BY (d.action_kind = 'suppress'), d.created_at DESC, d.id DESC
          LIMIT %s
         """,
         params,

@@ -84,7 +84,21 @@ const SURFACE_LABEL = {
 };
 
 let merchantId = null;
-const q = () => (merchantId ? `?merchant_id=${encodeURIComponent(merchantId)}` : "");
+// Build a query string from the merchant filter plus any extra params.
+// The previous version concatenated a bare `&limit=25` onto `q()` and tried to
+// repair it with .replace("?&", "?") — which never fired when no merchant was
+// selected, because the string was then `/decisions&limit=25` with no `?` in it
+// at all. The decision feed 404'd on every unfiltered load, which is the
+// default state of the page.
+const q = (extra = {}) => {
+  const p = new URLSearchParams();
+  if (merchantId) p.set("merchant_id", merchantId);
+  for (const [k, v] of Object.entries(extra)) {
+    if (v !== undefined && v !== null) p.set(k, v);
+  }
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
 
 async function loadRisk() {
   const d = await json(`/metrics/revenue-at-risk${q()}`);
@@ -129,12 +143,17 @@ async function loadBudgets() {
     box.append(el("p", "empty", "No budget window for today."));
     return;
   }
+  // Budgets are per merchant per day, so an unfiltered view stacks every
+  // merchant's tiles together. Without the merchant name they read as a dozen
+  // duplicate "contact budget" cards with different limits and no way to tell
+  // which is which.
   for (const r of rows) {
     const pct = r.limit_val ? Math.min(100, (r.consumed_val / r.limit_val) * 100) : 0;
+    const authorised = `of ${r.kind === "discount" ? inr(r.limit_val) : num(r.limit_val)} authorised`;
     const t = tile(
-      `${r.kind} budget`,
+      merchantId ? `${r.kind} budget` : `${r.kind} · ${r.name}`,
       r.kind === "discount" ? inr(r.consumed_val) : num(r.consumed_val),
-      `of ${r.kind === "discount" ? inr(r.limit_val) : num(r.limit_val)} authorised`,
+      authorised,
     );
     const track = el("div", "meter-track");
     const fill = el("div", `meter-fill ${pct >= 100 ? "full" : pct >= 80 ? "warn" : ""}`);
@@ -173,6 +192,16 @@ async function loadPolicy() {
   box.append(table);
 }
 
+/* The audit record stores amounts in paise, because that is the unit the
+   arithmetic is done in and rounding it at the source would make the trail
+   lossy. Converting for display belongs here rather than there — otherwise a
+   rejected alternative reads "expected margin 283592 paise" in the same row as
+   a formatted "₹2,819.33". */
+function rupeeify(text) {
+  if (!text) return "";
+  return String(text).replace(/(-?\d+)\s*paise\b/g, (_, p) => inr(Number(p), { signed: true }));
+}
+
 /* Status carries a glyph and a word, never colour alone. */
 function verdictPill(v) {
   const map = {
@@ -185,12 +214,22 @@ function verdictPill(v) {
 }
 
 async function loadDecisions() {
-  const rows = await json(`/decisions${q()}&limit=25`.replace("?&", "?"));
+  let rows = await json(`/decisions${q({ limit: 25 })}`);
   const box = $("decisions-body");
   box.innerHTML = "";
   if (!rows.length) {
     box.append(el("p", "empty", "No decisions yet — run `make plan`."));
     return;
+  }
+  // The API already returns funded actions ahead of suppressions — sorting
+  // here as well would only reorder whatever page it sent, and could not
+  // recover an action that fell off the end of it. This just states the split.
+  const acted = rows.filter((d) => d.action_kind !== "suppress");
+  const held = rows.filter((d) => d.action_kind === "suppress");
+  if (held.length) {
+    box.append(el("p", "feed-note",
+      `${num(acted.length)} funded, ${num(held.length)} suppressed — `
+      + `funded actions shown first.`));
   }
   const table = el("table");
   table.innerHTML = `<thead><tr>
@@ -201,7 +240,7 @@ async function loadDecisions() {
   for (const d of rows) {
     const alts = (d.alternatives_rejected || []).slice(0, 3).map((a) => {
       const by = a.blocked_by ? `blocked by <code>${a.blocked_by}</code>` : "not funded";
-      return `<div class="rejected">✕ ${a.action}${a.channel && a.channel !== "none" ? "/" + a.channel : ""} — ${by}: ${a.reason ?? ""}</div>`;
+      return `<div class="rejected">✕ ${a.action}${a.channel && a.channel !== "none" ? "/" + a.channel : ""} — ${by}: ${rupeeify(a.reason)}</div>`;
     }).join("");
     const tr = el("tr");
     tr.innerHTML = `

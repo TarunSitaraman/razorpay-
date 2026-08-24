@@ -190,6 +190,15 @@ def contact_budget_spent(s: CaseSnapshot) -> StopDecision:
     contacts from every surface, which is precisely what a per-agent budget
     cannot see.
     """
+    out_of_contacts = (s.contacts_this_window >= s.contact_cap
+                       or s.contact_budget_remaining <= 0)
+    if out_of_contacts and s.has_costless_action:
+        # Having no contacts left says nothing about an action that spends no
+        # contact. Stopping here closed the whole case — including the free
+        # silent retry beside it — the moment the merchant's daily pool ran dry,
+        # so on an exhausted day the system stopped chasing everything rather
+        # than falling back to the actions that were still free.
+        return CONTINUE
     if s.contacts_this_window >= s.contact_cap:
         return _stop(StopReason.CONTACT_BUDGET_SPENT,
                      f"customer has had {s.contacts_this_window} contacts this window "

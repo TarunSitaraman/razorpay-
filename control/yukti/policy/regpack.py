@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 
 from yukti.domain.decline import lookup
 from yukti.domain.enums import ActionKind, Channel, PolicyVerdict
+from yukti.domain.money import format_inr
 
 # RBI's consolidated e-mandate framework requires a pre-debit notification at
 # least 24 hours before each debit, with an opt-out path.
@@ -106,8 +107,12 @@ def rbi_afa_limit(r: ActionRequest) -> RuleResult:
     if r.amount_paise > limit and not r.has_afa:
         return RuleResult(
             rule, PolicyVerdict.BLOCK,
-            f"amount {r.amount_paise} exceeds the AFA-free limit {limit} "
-            f"for category '{r.merchant_category}' and no AFA is present",
+            # Formatted, because this string is read by a human on the console
+            # and in the audit trail. The precision lives in the structured
+            # fields; the sentence is the explanation.
+            f"amount {format_inr(r.amount_paise)} exceeds the AFA-free limit "
+            f"{format_inr(limit)} for category '{r.merchant_category}' and no "
+            f"AFA is present",
         )
     return _allow(rule)
 
