@@ -87,6 +87,12 @@ class ArmMetrics:
     contact_incremental_margin_paise: int = 0
     contact_incremental_per_1k: Interval | None = None
 
+    # What a holdout of this size can and cannot resolve. Reported because the
+    # error against oracle truth is otherwise uninterpretable — see
+    # `power_requirement`.
+    per_case_sd_paise: float = 0.0
+    cases_needed_for_power: int = 0
+
     # Per 1,000 opportunities, which is how the headline is quoted.
     net_incremental_per_1k: Interval | None = None
     gross_recovered_per_1k: float = 0.0
@@ -315,6 +321,50 @@ def holdout_estimate(
         low=draws[max(0, int(math.floor(tail * rounds)))],
         high=draws[min(rounds - 1, int(math.ceil((1 - tail) * rounds)) - 1)],
     )
+
+
+# Two-sided 95% significance with 80% power: 1.96 + 0.84.
+POWER_Z = 2.8
+
+
+def power_requirement(
+    baseline: dict[str, ArmOutcome], true_effect_paise: int, treated_cases: int,
+    holdout_share: float,
+) -> tuple[float, int]:
+    """How many cases a holdout design needs to resolve an effect this small.
+
+    This is the honest answer to *how do you know your lift number is right?*,
+    and it is a better answer than a point estimate that happens to land near
+    the truth. Recovery outcomes are Bernoulli draws multiplied by heavy-tailed
+    obligation amounts, so the per-case standard deviation is enormous next to
+    the per-case effect — on an NBFC book, ~12,870 rupees of noise around a
+    ~315-rupee effect, an effect size of 0.025 sigma.
+
+    No estimator fixes that; it is a property of the data. Post-stratifying the
+    difference on amount decile was tried and made the error *worse* (-414% to
+    -504%), which is the measurement that identified where the variance actually
+    lives: in whether individual large obligations happened to recover, not in
+    any imbalance between the groups.
+
+    So the useful thing to report is the sample size the design would need.
+    With an unequal split the smaller arm dominates the standard error:
+
+        SE = sd * sqrt(1/n_treated + 1/n_holdout)
+
+    which for a holdout share `h` of N cases is `sd * sqrt((1/(1-h) + 1/h) / N)`.
+    Returns the per-case standard deviation and the N required.
+    """
+    values = [o.net_margin_paise for o in baseline.values()]
+    if len(values) < 2 or not true_effect_paise or not treated_cases:
+        return 0.0, 0
+    mean = sum(values) / len(values)
+    sd = math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
+    per_case_effect = abs(true_effect_paise) / treated_cases
+    if sd <= 0 or per_case_effect <= 0:
+        return sd, 0
+    h = min(max(holdout_share, 1e-6), 1 - 1e-6)
+    factor = 1 / (1 - h) + 1 / h
+    return sd, int(math.ceil(factor * (POWER_Z * sd / per_case_effect) ** 2))
 
 
 def compare(a: ArmMetrics, b: ArmMetrics) -> str:

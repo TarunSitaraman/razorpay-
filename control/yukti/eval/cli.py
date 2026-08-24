@@ -136,16 +136,22 @@ def sweep(
                 for k in keys:
                     table.add_column(f"{k} {BY_KEY[k].label}", justify="right")
             rows.append((b, {
-                k: result.metrics[k].contact_incremental_margin_paise for k in keys
+                k: (result.metrics[k].contact_incremental_margin_paise,
+                    result.metrics[k].contacts) for k in keys
             }))
 
+    # Contacts actually used are shown beside the margin. Without them a
+    # saturating row reads as "the arms stopped responding to budget" when what
+    # it means is "the budget stopped binding" — a different fact, and the one
+    # that explains the shape.
     for b, by_key in rows:
-        best = max(by_key.values()) if by_key else 0
-        table.add_row(
-            f"{b:,}",
-            *[f"[bold green]{format_inr(by_key[k])}[/]" if by_key[k] == best
-              else format_inr(by_key[k]) for k in keys],
-        )
+        best = max(v for v, _ in by_key.values()) if by_key else 0
+        cells = []
+        for k in keys:
+            margin, contacts = by_key[k]
+            text = f"{format_inr(margin)}  ({contacts:,} used)"
+            cells.append(f"[bold green]{text}[/]" if margin == best else text)
+        table.add_row(f"{b:,}", *cells)
     console.print()
     console.print(table)
 

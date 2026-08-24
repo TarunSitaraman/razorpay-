@@ -221,6 +221,8 @@ def _estimator_validation(result: EvalResult, console: Console) -> None:
     console.print()
     console.print(table)
 
+    _power_note(result, console)
+
     # The point estimate being off is expected — a 10% holdout is a few hundred
     # observations. What matters is whether the interval covers the truth: a
     # wide honest interval is a working estimator, a tight interval that misses
@@ -285,6 +287,42 @@ import pathlib
 EXPORT_PATH = pathlib.Path(__file__).resolve().parents[3] / "artifacts" / "eval-report.json"
 
 
+def _power_note(result: EvalResult, console: Console) -> None:
+    """How much data an honest lift number actually needs.
+
+    The interval covering the truth is necessary but weak — an interval wide
+    enough covers anything. This states the binding constraint instead, which is
+    the more useful and more defensible claim, and it is one no competitor in
+    this market publishes.
+    """
+    yukti = result.metrics.get("Y")
+    if not yukti or not yukti.cases_needed_for_power:
+        return
+    have = result.cases
+    need = yukti.cases_needed_for_power
+    per_case = (abs(yukti.true_incremental_margin_paise)
+                / max(1, have - result.holdout_cases))
+
+    console.print(
+        f"\n  [bold]What it would take to measure this for real.[/] Yukti's true "
+        f"effect is {format_inr(int(per_case))} per case against a per-case "
+        f"spread of {format_inr(int(yukti.per_case_sd_paise))} — an effect size "
+        f"of {per_case / yukti.per_case_sd_paise:.3f} sigma."
+    )
+    verdict = ("[green]enough[/]" if have >= need
+               else f"[yellow]{need / have:.0f}x more than this merchant has[/]")
+    console.print(
+        f"  At a {100 * result.holdout_cases / max(1, have):.0f}% holdout that "
+        f"needs [bold]{need:,}[/] cases for 80% power; there are "
+        f"{have:,} — {verdict}."
+    )
+    console.print(
+        "  [dim]So the oracle column is the trustworthy one HERE, and the "
+        "holdout column is the one a real deployment gets. Reporting the gap, "
+        "rather than a lift number with no interval, is the point.[/]"
+    )
+
+
 def to_dict(result: EvalResult) -> dict:
     return {
         "merchant_id": result.merchant_id,
@@ -310,6 +348,8 @@ def to_dict(result: EvalResult) -> dict:
                 "spend_paise": m.cost_paise,
                 "net_incremental_paise": m.true_incremental_margin_paise,
                 "per_1k": _interval(m.net_incremental_per_1k),
+                "cases_needed_for_power": m.cases_needed_for_power,
+                "per_case_sd_paise": m.per_case_sd_paise,
                 "contact_incremental_paise": m.contact_incremental_margin_paise,
                 "contact_per_1k": _interval(m.contact_incremental_per_1k),
                 "holdout_estimate": _interval(m.holdout_incremental),

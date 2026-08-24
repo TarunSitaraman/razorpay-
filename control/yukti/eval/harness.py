@@ -122,6 +122,13 @@ def run(
         # arm's estimate by the holdout share.
         metrics.holdout_incremental = estimator.holdout_estimate(
             outcomes, baseline, assigned, len(facts) - result.holdout_cases, seed=seed)
+        metrics.per_case_sd_paise, metrics.cases_needed_for_power = (
+            estimator.power_requirement(
+                baseline, metrics.true_incremental_margin_paise,
+                len(facts) - result.holdout_cases,
+                result.holdout_cases / len(facts) if facts else 0.0,
+            )
+        )
         result.metrics[arm.key] = metrics
 
     # Contact-attributable margin, once the reference arm has been scored.
