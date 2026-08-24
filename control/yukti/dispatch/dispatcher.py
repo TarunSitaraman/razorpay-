@@ -38,6 +38,8 @@ would leave an effect with no record of it, which is not recoverable at all.
 
 from __future__ import annotations
 
+import logging
+
 import hashlib
 import json
 from dataclasses import dataclass
@@ -60,6 +62,9 @@ from yukti.domain.ids import action_id
 # and open zero cases, and reported a clean run while doing it.
 LOCK_KEY_PREFIX = "yukti:dispatch:lock:"
 LOCK_TTL_SECONDS = 60
+
+
+log = logging.getLogger(__name__)
 
 
 class DispatchLocked(RuntimeError):
@@ -158,6 +163,29 @@ class Dispatcher:
                 self.conn.commit()
                 return DispatchOutcome(aid, dispatched=False, failed=True,
                                        reason=str(exc))
+            except Exception as exc:  # noqa: BLE001 — deliberate, see below
+                # An adapter that raises something unexpected must not take the
+                # rest of the batch with it. A planning cycle covers thousands
+                # of cases; letting one unrecognised exception escape aborts
+                # every case after it, and the merchant loses a day of recovery
+                # because one HTTP client raised a type this layer had not been
+                # taught about. The chaos suite found exactly that: a raw
+                # ConnectionError propagated out of `plan_cycle` and ended it.
+                #
+                # Broad, but not silent — and that distinction is the whole
+                # justification. The exception TYPE is recorded, so a
+                # programming error surfaces as thousands of identical failure
+                # reasons rather than disappearing. It is also logged at
+                # exception level with a stack trace, and the case stays open
+                # and workable tomorrow.
+                log.exception(
+                    "unexpected %s dispatching %s for case %s",
+                    type(exc).__name__, spec.action_kind.value, spec.case_id,
+                )
+                self._mark(aid, "failed", f"{type(exc).__name__}: {exc}")
+                self.conn.commit()
+                return DispatchOutcome(aid, dispatched=False, failed=True,
+                                       reason=f"{type(exc).__name__}: {exc}")
 
             self._mark(aid, "dispatched" if outcome.executed else "skipped")
             self._publish(spec, aid, decision_id, trace_id, outcome)

@@ -1,8 +1,23 @@
-"""Integration test fixtures. These require the local stack (`make up`)."""
+"""Shared test fixtures. These require the local stack (`make up`).
+
+Lives at the `tests/` root rather than under `integration/` so the chaos suite
+sees the same fixtures. Chaos tests break real seams — a dead adapter, a missing
+model, a replayed cycle — and they need the same database and merchant setup the
+integration tests use; duplicating that would let the two drift.
+"""
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+# `tests/integration` on the path so any suite can reuse the case builder that
+# lives beside the spine tests (`from test_plan_cycle import _make_case`).
+# pytest only adds a test module's OWN directory, so a sibling suite importing
+# it would otherwise fail at collection.
+sys.path.insert(0, str(Path(__file__).parent / "integration"))
 from yukti.domain.ids import customer_id, merchant_id, obligation_id
 from yukti.store.db import connect
 

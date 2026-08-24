@@ -1,0 +1,82 @@
+# Topic definitions. NOT APPLIED — see infra/README.md.
+#
+# `scripts/local/stack.sh` creates these locally with the same names; this file
+# is the production-shaped version with the settings that matter written down.
+#
+# Two decisions run through all of them:
+#
+#   Partition count must EXCEED the merchant count. Ordering is only required
+#   within a merchant, and keying every record by merchant_id gives that for
+#   free while letting consumers scale horizontally. Under-partitioning caps
+#   consumer parallelism at the partition count, and repartitioning a live topic
+#   moves keys between partitions — which breaks the per-merchant ordering the
+#   FSM's version checks rely on. Over-provision rather than resize later.
+#
+#   Retention is long because replay is load-bearing. The evaluation re-runs the
+#   same cases across six arms by replaying from offset, and an incident is
+#   diagnosed the same way. This log is the record, not a buffer.
+
+topics:
+  - name: payments.events
+    partitions: 64
+    replication_factor: 3
+    config:
+      retention.ms: 2592000000        # 30d — the replay window the eval needs
+      min.insync.replicas: 2          # with acks=all: survive one broker loss
+      compression.type: zstd
+
+  - name: recovery.opportunities
+    partitions: 64
+    replication_factor: 3
+    config:
+      retention.ms: 2592000000
+      min.insync.replicas: 2
+
+  - name: recovery.actions
+    partitions: 64
+    replication_factor: 3
+    config:
+      # Longer than the rest. This is what was actually done to customers, and
+      # it is the stream an audit question gets answered from.
+      retention.ms: 7776000000        # 90d
+      min.insync.replicas: 2
+
+  - name: recovery.outcomes
+    partitions: 64
+    replication_factor: 3
+    config:
+      retention.ms: 7776000000
+      min.insync.replicas: 2
+
+  - name: yukti.dlq
+    partitions: 8
+    replication_factor: 3
+    config:
+      # Effectively never dropped. A poison message that ages out of the DLQ is
+      # a bug nobody will now be able to reproduce.
+      retention.ms: 31536000000       # 365d
+      min.insync.replicas: 2
+
+producer_defaults:
+  # The edge produces with full ISR acknowledgement. A webhook that returned 200
+  # for an event Kafka never durably accepted is a silently lost payment event,
+  # and the sender will not retry it.
+  acks: all
+  enable.idempotence: true
+  max.in.flight.requests.per.connection: 5
+  # Note for anyone tuning this: the local edge currently calls ProduceSync per
+  # record with no linger, which is why the webhook replay path runs at ~13/s.
+  # Batching here is the fix; it is unfixed because the evaluation deliberately
+  # uses the direct-to-Kafka fast path and the demo replays at a controlled
+  # speed. See docs/ARCHITECTURE.md, "Known limits".
+  linger.ms: 20
+  batch.size: 65536
+
+consumer_defaults:
+  # Offsets are committed AFTER the database transaction that acts on the
+  # record, so a crash between the two replays the record rather than skipping
+  # it. At-least-once delivery is then made safe by the idempotency ledger,
+  # which is the layer that actually protects money.
+  enable.auto.commit: false
+  isolation.level: read_committed
+  max.poll.interval.ms: 600000

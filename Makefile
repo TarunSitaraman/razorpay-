@@ -87,9 +87,45 @@ outbox: ## Drain the transactional outbox to Kafka
 	@$(PY) -m yukti.cli outbox
 
 eval: ## Run all baseline arms and emit the lift report
-	@$(PY) -m yukti.eval.cli run
+	@$(PY) -m yukti.eval.cli run \
+	  $(if $(MERCHANT),--merchant $(MERCHANT)) \
+	  $(if $(DATE),--date $(DATE))
 
-demo: up migrate seed replay ## Full demo path from a cold start
+# A planning moment INSIDE the synthetic world, which spans 2026-05-01 to
+# 2026-07-29 with open cases from 2026-07-08. The default for `make plan` is
+# now(), and running the demo chain with that default is a trap worth naming:
+# every case is then months past the 21-day diminishing-returns knee, so all six
+# merchants stop their entire book and the console shows 23,864 cases and zero
+# actions. Target-specific variables propagate to prerequisites in GNU make, so
+# this reaches both `plan` and `eval`.
+demo: DATE = 2026-07-20T10:00:00
+demo: up install migrate seed history replay-fast consume train seed-policy services plan eval ## Everything, from a cold clone
+	@echo ""
+	@echo "  \033[0;36m[yukti]\033[0m ready — open http://localhost:8080"
+	@echo ""
+
+# The ordering is not arbitrary and the chain breaks if it is disturbed:
+#   seed        the synthetic world -> Postgres + Parquet
+#   history     the randomised exploration period, taken from obligations that
+#               failed BEFORE the temporal cutoff. This is the RCT the uplift
+#               model is identified from; without it there is nothing to train on.
+#   replay-fast + consume
+#               events after the cutoff become the open cases planning operates
+#               on. Unpaced, because `make demo` should not take 90 simulated
+#               days to finish; `make replay` is the paced path the demo screen
+#               recording uses.
+#   train       fits and PERSISTS the models with their feature schema
+#   seed-policy every merchant needs an active policy pack before any action can
+#               be evaluated
+#   services    BEFORE plan, not after. `plan` dispatches through the sandbox
+#               over HTTP, so on a cold clone with nothing running every dispatch
+#               fails: the first run of this chain recorded 2,408 actions, all
+#               with status 'failed', and reported 0 dispatched while looking
+#               like it had worked. It also builds the Go edge binaries, so the
+#               cold path exercises that compile too.
+#   plan        one planning cycle, so the console has decisions to show
+#   eval        the six-arm comparison; writes artifacts/eval-report.json, which
+#               is what /metrics/lift serves
 
 test: ## Run the test suite
 	@$(VENV)/bin/pytest -q

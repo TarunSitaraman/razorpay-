@@ -1,0 +1,91 @@
+# The webhook edge. NOT APPLIED — see infra/README.md.
+#
+# The only publicly exposed component, and the only one written in Go. It
+# verifies HMAC over the RAW body before parsing, rejects anything outside the
+# replay window, deduplicates on event_id, and produces to Kafka keyed by
+# merchant_id. It holds no state beyond a Redis dedup set, so it scales on
+# request rate alone and a compromise of it reaches nothing but a topic.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yukti-ingest-gw
+  labels: { app.kubernetes.io/name: yukti, app.kubernetes.io/component: edge }
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app.kubernetes.io/component: edge }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/component: edge }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: ingest-gw
+          # Built CGO_ENABLED=0 — franz-go is pure Go, so this is a static
+          # binary on a distroless base. That choice is why the component that
+          # scales horizontally has no C toolchain in its build.
+          image: yukti/ingest-gw:REPLACE_ME
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9100 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            # The webhook secret is a DIFFERENT value from the API key/secret in
+            # Razorpay's model, so it is configured separately rather than
+            # reusing one credential for both.
+            - name: YUKTI_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef: { name: yukti-webhook, key: secret }
+            - name: YUKTI_REDIS_URL
+              valueFrom:
+                secretKeyRef: { name: yukti-redis, key: url }
+            - name: YUKTI_KAFKA_BOOTSTRAP
+              valueFrom:
+                configMapKeyRef: { name: yukti-kafka, key: bootstrap }
+          # Liveness and readiness are deliberately different probes. Readiness
+          # fails when Kafka is unreachable, so the pod stops taking webhooks it
+          # cannot durably record — better a delivery retry than an accepted 200
+          # for an event that was dropped. Liveness only checks the process, so
+          # a Kafka outage does not trigger a restart storm.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "200m", memory: "128Mi" }
+            limits:   { memory: "256Mi" }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: yukti-ingest-gw
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: yukti-ingest-gw }
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    # Scaled on request rate rather than CPU: HMAC verification is cheap and the
+    # pod is I/O-bound on Redis and Kafka, so CPU would lag the actual load.
+    - type: Pods
+      pods:
+        metric: { name: yukti_webhooks_received_per_second }
+        target: { type: AverageValue, averageValue: "500" }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: yukti-ingest-gw
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app.kubernetes.io/component: edge }

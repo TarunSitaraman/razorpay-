@@ -39,12 +39,27 @@ Three gaps survive that landscape:
 
 | The bar | How | Status |
 |---|---|---|
-| **Measured** money | Holdout-based incremental ₹ with 95% CIs, not gross | in progress |
-| **across a batch** | Lagrangian allocator over all open cases per planning window | in progress |
-| **compliant escalation** | RegPack: RBI 24h pre-debit · ₹15k AFA · NPCI caps · TRAI 9–21h · DPDP, plus merchant approval thresholds | in progress |
-| **stopping rules** | Named `StopReason` on every stop; console groups by rule | schema done |
-| **audit trail** | Append-only hash-chained `audit_event` | schema done |
-| **bounded workflow** | `ActionKind` omits refund/payout/mandate-cancel entirely | ✅ done |
+| **Measured** money | Holdout incremental ₹ with 95% CIs, plus the sample size honest measurement would need | ✅ |
+| **across a batch** | Lagrangian allocator over every open case per planning window | ✅ |
+| **compliant escalation** | RegPack: RBI 24h pre-debit · ₹15k AFA · NPCI caps · TRAI 9–21h · DPDP, plus merchant approval thresholds | ✅ |
+| **stopping rules** | Named `StopReason` on every stop; console groups by rule and shows the money not chased | ✅ |
+| **audit trail** | Append-only hash-chained `audit_event`; tamper tests detect edits and deletions separately | ✅ |
+| **bounded workflow** | `ActionKind` omits refund/payout/mandate-cancel entirely | ✅ |
+
+**The headline**, on an NBFC lending book of 3,475 cases — every arm running the
+same allocator, stopping rules and policy engine, differing only in what they
+optimise:
+
+| arm | contacts | recovered | contact-attributable ₹ | per 1k (95% CI) |
+|---|--:|--:|--:|---|
+| fixed cadence | 86 | 1,158 | −1,31,998 | −37,985 [−104,025, +25,003] |
+| propensity only | 89 | 1,160 | −43,638 | −12,558 [−59,323, +24,368] |
+| **Yukti (uplift)** | **88** | **1,172** | **+3,61,255** | **+103,958 [+38,351, +174,141]** |
+
+Yukti spends the *same* budget and is the only arm whose interval excludes zero.
+Propensity — same features, same learner, different objective — is second worst.
+Full method, caveats and the segment where this does *not* pay:
+[docs/EVALUATION.md](docs/EVALUATION.md).
 
 ---
 
@@ -54,29 +69,25 @@ The local stack runs **natively — no Docker daemon required** (Kafka 4.3.1 in
 KRaft mode on the JVM, system Postgres 16, Redis).
 
 ```bash
-make up        # Kafka + Postgres + Redis
-make install   # Python deps into .venv
-make migrate   # apply schema
-make seed      # generate the synthetic world (fixed seed, reproducible)
-make replay    # replay the event log into Kafka
-make test      # 162 tests
+make demo      # everything below, from a cold clone
+make services  # ingest-gw + sandbox + console API
+open http://localhost:8080
 ```
 
-Then form opportunities and serve the console API:
+`make demo` chains the whole path: stack up, schema, synthetic world, the
+randomised exploration history the uplift model trains on, model fitting, policy
+packs, a planning cycle, and the six-arm evaluation. Each step is also a target
+of its own (`make seed`, `make history`, `make train`, `make plan`, `make eval`)
+if you want to watch them individually.
 
 ```bash
-.venv/bin/python -m yukti.cli consume    # Kafka -> recovery cases
-.venv/bin/python -m yukti.cli serve      # http://localhost:8080
+make test      # 731 tests
 ```
 
-```
-$ curl -s localhost:8080/metrics/revenue-at-risk
-₹2,54,56,596.27 at risk across 1,593 open cases
-  invoice             162 cases   ₹1,17,12,862.14
-  subscription_cycle  767 cases   ₹1,05,80,124.39
-  cart                450 cases     ₹17,47,797.58
-  order               214 cases     ₹14,15,812.16
-```
+The console leads with revenue at risk split across all four leak surfaces, then
+the measured-money panel, the stopping rules with the money deliberately not
+chased, the budget meters, the policy blocks by rule, and a decision feed showing
+what each decision *turned down* and which component turned it down.
 
 ## Architecture
 
@@ -171,15 +182,25 @@ working.
   `tests/integration/test_llm_live.py` runs against a real provider for anyone
   with a key (`YUKTI_LIVE_LLM_TESTS=1`).
 
+## Documentation
+
+| | |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The four planes, the LLM seam, event correctness, the decision path, and what is unfinished |
+| [EVALUATION.md](docs/EVALUATION.md) | The six arms, the headline result, and what honest lift measurement actually costs |
+| [RESEARCH.md](docs/RESEARCH.md) | Every claim about Razorpay, Indian regulation and the market, with sources — and confirmed facts kept separate from inference |
+| [DEMO.md](docs/DEMO.md) | The six-minute script, twelve beats, with failure drills |
+| [INTERVIEW.md](docs/INTERVIEW.md) | The questions this project should be asked, answered cold — including the uncomfortable ones |
+
 ## Layout
 
 ```
 edge/        Go — webhook ingest (HMAC, replay guard, dedup), outcome collector
 control/     Python — domain, opportunity, intelligence, allocator, stopping,
              policy, agent, dispatch, experiment, eval, api
+             api/static/ is the console: no build step, no Node toolchain
 sandbox/     Razorpay-contract-shaped payments simulator
 datagen/     synthetic world + counterfactual outcome oracle
-dashboard/   Next.js merchant console
 infra/       Terraform + K8s manifests (written, not applied)
 tests/       unit · integration · agent · policy · chaos · load · eval
 ```

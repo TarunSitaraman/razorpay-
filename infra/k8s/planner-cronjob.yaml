@@ -1,0 +1,86 @@
+# The planning cycle. NOT APPLIED — see infra/README.md.
+#
+# A CronJob rather than a Deployment because `plan_cycle` is a pure function of
+# database state: it reads what is true at `as_of` and writes what follows from
+# it. Nothing is carried between cycles, so a crash is resumed by running it
+# again and a replay of a past window reproduces the decision made then. Holding
+# that in a long-lived process would add state the design deliberately does not
+# have.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: yukti-planner
+  labels: { app.kubernetes.io/name: yukti, app.kubernetes.io/component: planner }
+spec:
+  schedule: "0 */4 * * *"
+
+  # Never two cycles for one merchant at once. The budget ledger's conditional
+  # update (`WHERE consumed + %s <= limit`) makes concurrency safe rather than
+  # corrupting, but two solves competing for the same budget is wasted compute
+  # for an allocation that is already optimal for the window.
+  concurrencyPolicy: Forbid
+
+  # A missed window is not made up. Recovery decisions are time-sensitive —
+  # yesterday's optimal allocation is not today's — so a late catch-up run would
+  # act on stale intelligence.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: yukti-planner
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          containers:
+            - name: planner
+              image: yukti/control:REPLACE_ME
+              args: ["python", "-m", "yukti.cli", "plan"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                # Referenced, never defaulted. A manifest carrying a plausible
+                # default is a manifest someone applies unchanged.
+                - name: YUKTI_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: yukti-db, key: url }
+                - name: YUKTI_REDIS_URL
+                  valueFrom:
+                    secretKeyRef: { name: yukti-redis, key: url }
+                - name: YUKTI_KAFKA_BOOTSTRAP
+                  valueFrom:
+                    configMapKeyRef: { name: yukti-kafka, key: bootstrap }
+                # Absent by design. With no provider key the agent falls back to
+                # conservative defaults and records that it did; the allocator,
+                # stopping rules, policy engine and dispatcher never call a model.
+                # Running with no key is a supported state, not a degraded one.
+                - name: GEMINI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: yukti-llm
+                      key: gemini
+                      optional: true
+              resources:
+                requests: { cpu: "500m", memory: "1Gi" }
+                limits:   { memory: "2Gi" }
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: artifacts, mountPath: /app/artifacts, readOnly: true }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            # Fitted models, written by the training job. Read-only here: the
+            # planner scores, it never refits — a cycle that silently retrained
+            # would make two runs of the same window disagree.
+            - name: artifacts
+              persistentVolumeClaim:
+                claimName: yukti-model-artifacts
