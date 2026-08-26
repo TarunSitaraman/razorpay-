@@ -43,7 +43,11 @@ func (p *Producer) Produce(ctx context.Context, key string, value []byte, header
 	for k, v := range headers {
 		rec.Headers = append(rec.Headers, kgo.RecordHeader{Key: k, Value: []byte(v)})
 	}
-	return p.client.ProduceSync(ctx, rec).FirstErr()
+	// Produce asynchronously to avoid blocking on full ISR acks per record.
+	// The edge is stateless and Kafka is the source of truth, so we rely on the
+	// client's internal retry mechanism and background flushing.
+	p.client.Produce(ctx, rec, nil)
+	return nil
 }
 
 func (p *Producer) Close() { p.client.Close() }

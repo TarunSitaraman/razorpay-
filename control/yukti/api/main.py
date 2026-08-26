@@ -39,7 +39,18 @@ async def lifespan(app: FastAPI):
     pool.close()
 
 
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+# Setup tracer provider
+trace.set_tracer_provider(TracerProvider())
+# We export to console, but could be OTLP/Jaeger
+trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
 app = FastAPI(title="Yukti", version="0.1.0", lifespan=lifespan)
+FastAPIInstrumentor.instrument_app(app)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )

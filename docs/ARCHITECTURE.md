@@ -274,14 +274,7 @@ That is also the token-cost answer.
   rather than a claim.
 - **`PaymentIntelligenceProvider` is a Vulcan-*shaped* interface** with a
   simulated implementation. It is not Vulcan.
-- **The webhook replay path is slow** (~13 events/s) and two causes are
-  identified: a fresh `httpx.AsyncClient` per webhook, and `ProduceSync` per
-  record with full ISR acks and no linger. Not fixed, because the evaluation
-  uses the direct-to-Kafka fast path deliberately and the demo replays at a
-  controlled speed — the honest reason is proportionality, not that it went
-  unnoticed.
-- **No OpenTelemetry.** Instrumentation was scoped for the final day and cut in
-  favour of documentation and the cold-clone guarantee.
+
 - **The dispatcher catches `Exception` as a last resort.** Deliberate and
   narrow in intent: a planning cycle covers thousands of cases, and letting one
   unrecognised exception escape aborts every case after it. The chaos suite

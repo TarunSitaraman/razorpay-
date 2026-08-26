@@ -25,6 +25,11 @@ dependencies = [
     "anthropic>=0.40",
     "typer>=0.12",
     "rich>=13.9",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-instrumentation-fastapi>=0.40b0",
+    "opentelemetry-instrumentation-httpx>=0.40b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.40b0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
