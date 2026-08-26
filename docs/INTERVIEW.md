@@ -193,26 +193,26 @@ the point.
 
 ---
 
-## A Ruthless Self-Critique (Scope for Improvement)
+## Architectural Flaws & Required Changes
 
-If this were to move from a hackathon project to a production Razorpay service, here are the architectural flaws that must be addressed:
+If this moves to a production Razorpay service, the following structural limits must be addressed:
 
-**1. The "Proven Lift" Delusion (Federated Inference is Mandatory)**
-Yukti claims its killer feature is proving *incremental margin*. Yet the research shows that on a typical 3.5k case merchant, the variance washes out the signal (0.024σ effect size). For 95% of Razorpay's merchants, Yukti mathematically cannot prove lift alone.
-*Fix:* Move from per-merchant holdouts to **Federated Causal Inference** (pooling across the SME cohort) or use **Synthetic Controls** to predict counterfactuals without starving the merchant of 10% of their recovery volume.
+**1. Federated Inference**
+The system currently relies on per-merchant holdouts. The research shows that on a typical 3.5k case merchant, the variance washes out the signal (0.024σ effect size). For 95% of Razorpay's merchants, proving lift on isolated data is mathematically impossible.
+*Fix:* Move to Federated Causal Inference (pooling the SME cohort) or use Synthetic Controls to compute counterfactuals.
 
-**2. The "Costless Action" Contradiction (Customer Fatigue)**
-The allocator prioritizes actions that cost ₹0 (like silent retries). However, a silent retry isn't free for the *customer*, who receives bank SMS decline alerts. Greedily maximizing free actions creates massive customer annoyance.
-*Fix:* Introduce a synthetic **"Fatigue Penalty"** (e.g., -₹5) into the Lagrangian objective function for all "free" actions, forcing the optimizer to use them judiciously.
+**2. The Costless Action Bug (Fatigue)**
+The allocator prioritizes actions costing ₹0 (e.g., silent retries). However, a silent retry is not free for the customer, who receives bank SMS alerts. Maximizing free actions degrades the user experience.
+*Fix:* Implement a synthetic "Fatigue Penalty" in the Lagrangian objective function for all costless actions to force judicial use.
 
-**3. Batch vs. Real-Time Latency (Speedboats, not Battleships)**
-The allocator runs "per merchant per planning window." But revenue recovery has a vicious time-decay curve (abandoned carts die in minutes). A global knapsack solver running in batches is incompatible with high-urgency recovery.
-*Fix:* Transition to a **streaming allocator / micro-batching**. Compute the Lagrangian "shadow price" offline nightly, but apply that multiplier in *real-time* as events stream in for instant dispatch.
+**3. Batch Latency**
+The allocator operates per merchant per planning window. Revenue recovery (especially abandoned carts) relies on a severe time-decay curve. A batch-based knapsack solver is incompatible with high-urgency recovery.
+*Fix:* Move to a streaming allocator. Compute the Lagrangian shadow price offline, then apply the multiplier in real-time as events stream in.
 
-**4. Under-utilized LLMs (We Need Negotiation, Not Copywriting)**
-The LLM is highly sandboxed, acting merely as a classifier and copywriter. But TRAI DLT templates in India mean "copywriting" is just filling in blanks.
-*Fix:* Lean into what LLMs actually do well: **Negotiation and State Machines**. Allow the LLM to handle interactive *Promise-to-Pay (PTP)* negotiations over WhatsApp (within strict policy bounds), updating ledgers dynamically based on conversational intent.
+**4. LLM Under-utilization**
+The LLM acts as a classifier and copywriter. Given that TRAI DLT templates dictate exact strings, generating copy is a waste of compute.
+*Fix:* Shift the LLM to handle interactive Promise-to-Pay (PTP) state machines over WhatsApp, dynamically updating ledgers based on user negotiation.
 
-**5. Conway's Law and Cross-Agent Arbitration**
-Yukti assumes a monolithic top-down allocator. But inside Razorpay, the Subscription Team and Checkout Team won't surrender execution logic to a central planner.
-*Fix:* Redesign Yukti as a decentralized **"Distributed Contact Ledger"**. Agents "bid" for contact tokens. If Yukti says a customer's fatigue score is too high, the token is denied. This integration layer is vastly easier to ship organizationally.
+**5. Cross-Agent Arbitration**
+The current architecture assumes a top-down monolithic allocator. Organizationally, different product teams (Subscription vs. Checkout) will not surrender execution logic to a central planner.
+*Fix:* Re-architect as a decentralized "Distributed Contact Ledger". Independent agents bid for contact tokens, and the ledger denies tokens if fatigue scores breach thresholds.
