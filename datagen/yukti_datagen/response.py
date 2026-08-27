@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from yukti.domain.decline import lookup
@@ -94,6 +94,77 @@ CHANNEL_POWER: dict[Channel, float] = {
     Channel.WHATSAPP: 1.00,
     Channel.VOICE: 1.15,
 }
+
+
+# ---------------------------------------------------------------------------
+# The assumptions, made explicit
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class OracleParams:
+    """Every number this oracle asserts about the world, in one object.
+
+    These constants are the *inputs* to the evaluation, not its findings. That
+    distinction is the most important thing to be honest about in this
+    repository: "uplift beats propensity" is a consequence of
+    ``max_uplift[PERSUADABLE] >> max_uplift[SURE_THING]``, and if that gap does
+    not exist in real Indian payment data then it does not exist in the result
+    either. Hard-coding them as module constants made that dependency invisible.
+
+    Collecting them here makes the dependency *sweepable*: `eval.sensitivity`
+    varies each one and reports the region of assumption-space in which the
+    thesis survives. A single point estimate from a world the author authored
+    proves nothing; a frontier showing where the author's own system loses is
+    an actual argument.
+    """
+
+    organic_recovery: dict[UpliftArchetype, float]
+    max_uplift: dict[UpliftArchetype, float]
+    irritation: dict[UpliftArchetype, float]
+    contact_tolerance: dict[UpliftArchetype, int]
+    channel_power: dict[Channel, float]
+
+    # Contact through an unbroken promise-to-pay: reads as distrust.
+    promise_chase_penalty: float = -0.18
+    # A promise-to-pay is itself evidence of intent; this floors the baseline.
+    promise_floor: float = 0.60
+    # Contacting a sleeping dog, scaled by how intrusive the channel is.
+    sleeping_dog_penalty: float = -0.14
+    # Multiplicative response decay per prior contact in the trailing week.
+    fatigue_decay: float = 0.78
+
+    # Probability that a SILENT retry irritates the customer, per attempt
+    # beyond tolerance. Defaults to zero, which is the assumption the allocator
+    # currently relies on to fund every costless action unconditionally
+    # (`allocator.lagrangian._take_costless_actions`).
+    #
+    # That assumption is false in Indian payments: the customer's bank sends an
+    # SMS on every debit attempt, and a failed mandate presentation can carry a
+    # bank charge. It is kept at zero by default only so this refactor changes
+    # no existing result, and it is a sweep axis precisely because the policy
+    # and its grader currently share the assumption — which means the default
+    # evaluation is structurally incapable of penalising the behaviour.
+    silent_retry_irritation: float = 0.0
+    silent_retry_tolerance: int = 3
+
+    def evolve(self, **overrides: object) -> OracleParams:
+        """A copy with some assumptions changed. Sweep axes use this."""
+        return replace(self, **overrides)  # type: ignore[arg-type]
+
+    def with_max_uplift(self, archetype: UpliftArchetype, value: float) -> OracleParams:
+        return self.evolve(max_uplift={**self.max_uplift, archetype: value})
+
+    def with_irritation(self, archetype: UpliftArchetype, value: float) -> OracleParams:
+        return self.evolve(irritation={**self.irritation, archetype: value})
+
+
+DEFAULT_PARAMS = OracleParams(
+    organic_recovery=dict(ORGANIC_RECOVERY),
+    max_uplift=dict(MAX_UPLIFT),
+    irritation=dict(IRRITATION),
+    contact_tolerance=dict(CONTACT_TOLERANCE),
+    channel_power=dict(CHANNEL_POWER),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,13 +247,15 @@ def _timing_quality(ctx: CaseContext, iv: Intervention) -> float:
     return 0.85
 
 
-def _fit_quality(ctx: CaseContext, iv: Intervention) -> float:
+def _fit_quality(
+    ctx: CaseContext, iv: Intervention, params: OracleParams = DEFAULT_PARAMS
+) -> float:
     """How well the action suits the failure and the customer, in [0, 1]."""
     spec = lookup(ctx.decline_code)
     q = 1.0
 
     if iv.kind.contacts_customer:
-        q *= CHANNEL_POWER[iv.channel] / CHANNEL_POWER[Channel.VOICE]
+        q *= params.channel_power[iv.channel] / params.channel_power[Channel.VOICE]
         if iv.channel is not ctx.preferred_channel:
             q *= 0.80
         if not spec.customer_actionable:
@@ -209,7 +282,9 @@ def _fit_quality(ctx: CaseContext, iv: Intervention) -> float:
     return max(0.0, min(1.0, q))
 
 
-def _fatigue_quality(ctx: CaseContext, iv: Intervention) -> float:
+def _fatigue_quality(
+    ctx: CaseContext, iv: Intervention, params: OracleParams = DEFAULT_PARAMS
+) -> float:
     """Response decay from prior contacts, across every agent.
 
     Multiplicative decay per prior contact in the trailing week. This is the
@@ -220,10 +295,13 @@ def _fatigue_quality(ctx: CaseContext, iv: Intervention) -> float:
     """
     if not iv.kind.contacts_customer:
         return 1.0
-    return 0.78**ctx.prior_contacts_7d
+    return params.fatigue_decay**ctx.prior_contacts_7d
 
 
-def evaluate(ctx: CaseContext, iv: Intervention, seed: int) -> Outcome:
+def evaluate(
+    ctx: CaseContext, iv: Intervention, seed: int,
+    params: OracleParams = DEFAULT_PARAMS,
+) -> Outcome:
     """Counterfactual outcome of applying ``iv`` to ``ctx``.
 
     Determinism note: the recovery draw is keyed on the case only, NOT on the
@@ -233,24 +311,24 @@ def evaluate(ctx: CaseContext, iv: Intervention, seed: int) -> Outcome:
     This is the paired-comparison property that makes small lift measurable
     without enormous sample sizes.
     """
-    p_organic = ORGANIC_RECOVERY[ctx.archetype]
+    p_organic = params.organic_recovery[ctx.archetype]
 
     # An unbroken promise-to-pay is itself strong evidence of intent: roughly
     # three in five are kept. So the baseline is already high WITHOUT any chase,
     # which is precisely what makes chasing through one a losing move — there is
     # very little headroom left to win, and real damage available to do.
     if ctx.open_promise:
-        p_organic = max(p_organic, 0.60)
+        p_organic = max(p_organic, params.promise_floor)
 
     if iv.kind in (ActionKind.SUPPRESS, ActionKind.ESCALATE):
         p = p_organic
     else:
-        headroom = MAX_UPLIFT[ctx.archetype]
+        headroom = params.max_uplift[ctx.archetype]
         # Quality factors are each in [0, 1], so effect is bounded by headroom.
         quality = (
             _timing_quality(ctx, iv)
-            * _fit_quality(ctx, iv)
-            * _fatigue_quality(ctx, iv)
+            * _fit_quality(ctx, iv, params)
+            * _fatigue_quality(ctx, iv, params)
         )
         effect = headroom * quality
 
@@ -259,11 +337,11 @@ def evaluate(ctx: CaseContext, iv: Intervention, seed: int) -> Outcome:
         # makes the net effect negative, which is what earns OPEN_PROMISE_TO_PAY
         # its place as a stopping rule rather than a courtesy.
         if ctx.open_promise and iv.kind.contacts_customer:
-            effect = -0.18
+            effect = params.promise_chase_penalty
 
         # Sleeping dogs: contact suppresses rather than helps.
         if ctx.archetype is UpliftArchetype.SLEEPING_DOG and iv.kind.contacts_customer:
-            effect = -0.14 * CHANNEL_POWER[iv.channel]
+            effect = params.sleeping_dog_penalty * params.channel_power[iv.channel]
 
         p = max(0.0, min(0.985, p_organic + effect))
 
@@ -273,10 +351,23 @@ def evaluate(ctx: CaseContext, iv: Intervention, seed: int) -> Outcome:
 
     opted_out = False
     if iv.kind.contacts_customer:
-        excess = max(0, ctx.prior_contacts_7d + 1 - CONTACT_TOLERANCE[ctx.archetype])
+        excess = max(0, ctx.prior_contacts_7d + 1 - params.contact_tolerance[ctx.archetype])
         if excess > 0:
-            p_out = 1.0 - (1.0 - IRRITATION[ctx.archetype]) ** excess
+            p_out = 1.0 - (1.0 - params.irritation[ctx.archetype]) ** excess
             opted_out = _draw(seed, "optout", ctx.case_id, ctx.prior_contacts_7d) < p_out
+            if opted_out:
+                recovered = False
+    elif iv.kind.moves_money and params.silent_retry_irritation > 0:
+        # A silent retry is invisible to the merchant, not to the customer: the
+        # issuer sends a debit-attempt SMS either way, and a failed mandate
+        # presentation can carry a bank charge. Off by default (see
+        # `OracleParams.silent_retry_irritation`), because turning it on changes
+        # the headline — which is the entire reason it is worth being able to
+        # turn on.
+        excess = max(0, ctx.prior_contacts_7d + 1 - params.silent_retry_tolerance)
+        if excess > 0:
+            p_out = 1.0 - (1.0 - params.silent_retry_irritation) ** excess
+            opted_out = _draw(seed, "optout_silent", ctx.case_id, ctx.prior_contacts_7d) < p_out
             if opted_out:
                 recovered = False
 
@@ -293,10 +384,12 @@ def evaluate(ctx: CaseContext, iv: Intervention, seed: int) -> Outcome:
     )
 
 
-def true_uplift(ctx: CaseContext, iv: Intervention) -> float:
+def true_uplift(
+    ctx: CaseContext, iv: Intervention, params: OracleParams = DEFAULT_PARAMS
+) -> float:
     """Ground-truth causal effect of an intervention, with no sampling noise.
 
     Used only by the evaluation harness to report how close each arm got to the
     achievable optimum. No model may read this.
     """
-    return evaluate(ctx, iv, seed=0).uplift
+    return evaluate(ctx, iv, seed=0, params=params).uplift

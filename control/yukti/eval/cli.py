@@ -175,5 +175,69 @@ def arms() -> None:
     )
 
 
+
+
+@app.command()
+def sensitivity(
+    axis: str = typer.Option(
+        "all", help="Assumption to sweep, or 'all'. See yukti.eval.sensitivity.AXES"),
+    n_train: int = typer.Option(
+        20000,
+        help="Exploration cases used to fit each model. Below ~10,000 the "
+             "learner cannot rank the archetypes and the sweep measures "
+             "under-training rather than the assumption being swept."),
+    n_plan: int = typer.Option(3500, help="Cases in the planning population"),
+    contact_budget: int = typer.Option(90, help="Contacts available per cycle"),
+    seed: int = typer.Option(20260822, help="Outcome seed"),
+    save: str = typer.Option(
+        "artifacts/sensitivity.json", help="Where to write the raw grid"),
+) -> None:
+    """Sweep the assumptions the headline result rests on.
+
+    Needs no database and no services: the world is generated, explored, learned
+    and graded in process. That is deliberate — the frontier is the answer to
+    "you built a world where you win", so it has to be reproducible by someone
+    who has just cloned the repository and cannot run the stack.
+    """
+    import sys
+
+    from yukti.eval import sensitivity as sens
+    from yukti.eval.sensitivity_report import GRIDS, render, save_grid
+
+    # Windows consoles default to cp1252 and cannot encode the characters rich
+    # reaches for. A full sweep refits a model at ~28 grid points; the first run
+    # of this command computed all of it and then died in the renderer on a
+    # single minus sign. Reconfiguring costs nothing and the alternative is
+    # losing an hour of compute to a codepage.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    axes = list(GRIDS) if axis == "all" else [axis]
+    unknown = [a for a in axes if a not in sens.AXES]
+    if unknown:
+        console.print(f"[red]unknown axis[/]: {unknown[0]}. "
+                      f"choose from {', '.join(sens.AXES)}")
+        raise typer.Exit(1)
+
+    results = {}
+    for name in axes:
+        console.print(f"[cyan]sweeping[/] {name} - refitting at each point")
+        results[name] = sens.sweep(
+            name, GRIDS[name], n_train=n_train, n_plan=n_plan,
+            contact_budget=contact_budget, seed=seed,
+        )
+        # Written after EVERY axis, not once at the end. A full sweep refits a
+        # model at each of ~29 grid points and takes tens of minutes; the first
+        # run of this command computed all of it and then died in the renderer
+        # on a Unicode minus sign under a cp1252 console, losing the lot. The
+        # same lesson is already recorded one command up in this file.
+        if save:
+            save_grid(results, save)
+
+    render(console, results)
+    if save:
+        console.print("\n[dim]grid written to " + str(save) + "[/]")
+
+
 if __name__ == "__main__":
     app()

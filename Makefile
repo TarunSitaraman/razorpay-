@@ -10,7 +10,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help up down status reset venv install migrate seed history replay replay-fast train plan replay-webhooks edge services services-down outbox eval demo test lint fmt clean audit seed-policy
+.PHONY: help up down status reset venv install migrate seed history replay replay-fast train plan replay-webhooks edge services services-down outbox eval sensitivity demo test lint fmt clean audit seed-policy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -96,6 +96,13 @@ eval: ## Run all baseline arms and emit the lift report
 	@$(PY) -m yukti.eval.cli run \
 	  $(if $(MERCHANT),--merchant $(MERCHANT)) \
 	  $(if $(DATE),--date $(DATE))
+
+# Needs NO services and NO database: the world is generated, explored, learned
+# and graded in process. That is the point — the frontier is the answer to
+# "you built a world where you win", so it has to be reproducible by someone who
+# has just cloned the repository and cannot run the stack.
+sensitivity: ## Sweep the assumptions the headline rests on (no services needed)
+	@$(PY) -m yukti.eval.cli sensitivity $(if $(AXIS),--axis $(AXIS)) $(if $(SEED),--seed $(SEED))
 
 # A planning moment INSIDE the synthetic world, which spans 2026-05-01 to
 # 2026-07-29 with open cases from 2026-07-08. The default for `make plan` is

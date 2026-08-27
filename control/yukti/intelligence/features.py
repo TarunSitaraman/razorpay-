@@ -162,7 +162,18 @@ def build_frame(conn: psycopg.Connection, limit: int | None = None) -> Frame:
     if not rows:
         raise SystemExit("no labelled cases — run `make seed && make history` first")
 
-    df = pd.DataFrame(rows)
+    return frame_from_rows(pd.DataFrame(rows))
+
+
+def frame_from_rows(df: pd.DataFrame) -> Frame:
+    """Derive, encode and leak-check a raw row set.
+
+    Split out from `build_frame` so the database path and the in-memory
+    sensitivity sweep (`eval.sensitivity`) share ONE implementation of the
+    feature contract. A sweep that reimplemented this would be measuring its own
+    reimplementation, which is exactly the failure mode the sweep exists to
+    rule out — and the leak guard below would silently not be protecting it.
+    """
     df = _derive(df)
 
     labels = {

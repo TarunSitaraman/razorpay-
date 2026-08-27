@@ -59,4 +59,5 @@ asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "integration: requires the local stack (make up)",
+    "slow: refits a model; seconds rather than milliseconds",
 ]
