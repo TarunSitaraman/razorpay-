@@ -160,7 +160,12 @@ class TestCrossSurfaceArbitration:
 
 
 class TestOptimality:
-    @pytest.mark.parametrize("seed", range(60))
+    # Widened from 60 to 400. At 60 this assertion passed while the SAME
+    # generator contained an instance at 0.944 — seed 1123, the 124th — so the
+    # acceptance criterion had been tuned to its sample without anyone deciding
+    # to do that. The exchange pass in `_improve` closes it; the wider range is
+    # what stops it silently reopening.
+    @pytest.mark.parametrize("seed", range(400))
     def test_within_five_percent_of_a_true_optimum(self, seed):
         """Measured against brute force, not against the relaxation's own bound.
 
@@ -174,6 +179,18 @@ class TestOptimality:
         if optimum <= 0:
             return
         assert result.total_margin_paise >= 0.95 * optimum
+
+    def test_the_previously_failing_instance_is_now_exact(self):
+        """Regression pin for the instance that the 60-seed range never reached.
+
+        Named explicitly so that if a future change reintroduces the tail, the
+        failure says which case broke rather than "some seed in a range".
+        """
+        rng = random.Random(1123)
+        cands, budgets = random_instance(rng)
+        optimum = brute_force(cands, budgets)
+        assert optimum > 0
+        assert allocate(cands, budgets).total_margin_paise == optimum
 
     def test_negative_margin_candidates_are_never_funded(self):
         cands = [cand(i, -5_000, customer=f"cus_{i}") for i in range(5)]
@@ -228,3 +245,53 @@ class TestEdgeCases:
     def test_brute_force_refuses_large_instances(self):
         with pytest.raises(ValueError):
             brute_force([cand(i, 1) for i in range(21)], Budgets(1, 1, 1))
+
+
+class TestDiscountAccounting:
+    """The planner and the grader do not agree about what a discount costs.
+
+    `expected_margin` subtracts the discount in full. The outcome oracle charges
+    it only on conversion (`response.evaluate` computes `amount - discount` only
+    when the case recovered), so the true expected cost is `p_recover x
+    discount`. The planner therefore under-funds discount offers relative to the
+    world it is scored in.
+
+    That is a deliberate conservative bias, not an oversight — see the docstring
+    of `expected_margin` — but a deliberate bias that nobody can see is
+    indistinguishable from a bug six months later. These tests make the gap
+    explicit and fail if it changes without someone deciding to change it.
+    """
+
+    def test_discount_is_charged_in_full_not_expected(self):
+        uplift, amount, mdr, discount = 0.10, 10_00_000, 200, 50_000
+
+        margin = expected_margin(uplift, amount, mdr, discount, 0)
+        gross = uplift * amount * (1 - mdr / 10_000)
+
+        assert margin == int(round(gross - discount))
+        # The conversion-weighted alternative would be materially larger. If this
+        # ever stops being true the bias has been silently removed.
+        conversion_weighted = int(round(gross - uplift * discount))
+        assert conversion_weighted > margin
+
+    def test_channel_cost_is_charged_in_full_and_that_one_is_correct(self):
+        """The SMS is sent whether or not the customer pays."""
+        margin = expected_margin(0.10, 10_00_000, 200, 0, 900)
+        gross = 0.10 * 10_00_000 * (1 - 200 / 10_000)
+        assert margin == int(round(gross - 900))
+
+    def test_the_bias_only_ever_understates(self):
+        """Conservative in one direction, over the whole plausible range.
+
+        A bias that flipped sign somewhere would be worse than either a
+        consistent over- or under-estimate, because no single sentence would
+        describe it.
+        """
+        for uplift in (0.01, 0.05, 0.2, 0.5, 0.9):
+            for discount in (0, 1_000, 50_000, 2_00_000):
+                charged = expected_margin(uplift, 10_00_000, 200, discount, 0)
+                truthful = int(round(
+                    0.10 * 0 + uplift * 10_00_000 * (1 - 200 / 10_000)
+                    - uplift * discount
+                ))
+                assert charged <= truthful
