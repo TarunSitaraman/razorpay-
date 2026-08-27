@@ -184,12 +184,36 @@ cohort, injected degradation episodes with characteristic decline-mix shifts. It
 is not noise-free and it is not adversarial either. The honest statement is that
 it validates the *decision logic*, not the deployment.
 
-**"Why should we believe the 99%-of-optimal claim?"**
-Because it is measured against brute-force enumeration on small instances, not
-against the relaxation's own bound — which would flatter it. The first version
-hit 89% of exact optimum with a worst case of 0.187; taking the better of two
-heuristics moved that to 99% and 0.947. The mean was fine both times, which is
-the point.
+**"But you also wrote the grader. Isn't the result circular?"**
+For the headline number, largely yes, and the usual defences do not answer this
+particular objection. "The archetype is never a feature" and "treatment was
+randomised" establish that the learner did not cheat — that it recovered the
+generator's structure from observables. Neither establishes that the structure
+exists in real Indian payment data. `max_uplift[PERSUADABLE] = 0.46` against
+`max_uplift[SURE_THING] = 0.04` is an *input* I chose, and the headline follows
+from it.
+
+So the reply is not a defence, it is `make sensitivity`: vary each load-bearing
+assumption across a plausible range, refit at every grid point, and report where
+the thesis stops paying. The frontier is the defensible claim; the headline is
+one point on it. It needs no services, so anyone can reproduce it from a clean
+clone in about a minute — which is the only form of this answer worth giving.
+
+**"Why should we believe the optimality claim?"**
+Because it is measured against brute-force enumeration, not against the
+relaxation's own bound — which would flatter it — and because the certificate
+itself is now tested rather than assumed. The first version hit 89% of exact
+optimum with a worst case of 0.187; taking the better of two heuristics moved
+the mean to 0.9998. The mean was fine every time, which is the point.
+
+The part worth volunteering: the suite asserted `>= 0.95` over 60 seeds and
+passed, and extending the *same generator* to 400 seeds found an instance at
+0.944. A windowed exchange pass now closes it — 400 of 400 exactly optimal — but
+the finding that matters is that the acceptance criterion had been tuned to its
+sample without anyone choosing to do that. And "exactly optimal" is a claim about
+instances small enough to enumerate; at scale the honest number is the dual
+certificate, and `tests/unit/test_allocator_certificate.py` checks that it never
+overstates the truth.
 
 ---
 
@@ -201,13 +225,20 @@ If this moves to a production Razorpay service, the following structural limits 
 The system currently relies on per-merchant holdouts. The research shows that on a typical 3.5k case merchant, the variance washes out the signal (0.024σ effect size). For 95% of Razorpay's merchants, proving lift on isolated data is mathematically impossible.
 *Fix:* Move to Federated Causal Inference (pooling the SME cohort) or use Synthetic Controls to compute counterfactuals.
 
-**2. The Costless Action Bug (Fatigue)**
-The allocator prioritizes actions costing ₹0 (e.g., silent retries). However, a silent retry is not free for the customer, who receives bank SMS alerts. Maximizing free actions degrades the user experience.
-*Fix:* Implement a synthetic "Fatigue Penalty" in the Lagrangian objective function for all costless actions to force judicial use.
+**2. The Costless Action Bug (Fatigue)** — *named and measurable; not yet priced*
+The allocator funds actions costing ₹0 (e.g. silent retries) without consulting their margin, on the argument that an invisible action has no downside branch. That argument is false in India: the issuer sends a debit-attempt SMS regardless, and a failed mandate presentation can carry a bank charge.
 
-**3. Batch Latency**
-The allocator operates per merchant per planning window. Revenue recovery (especially abandoned carts) relies on a severe time-decay curve. A batch-based knapsack solver is incompatible with high-urgency recovery.
-*Fix:* Move to a streaming allocator. Compute the Lagrangian shadow price offline, then apply the multiplier in real-time as events stream in.
+The worse half of the problem was that the *grader* shared the assumption — the outcome oracle also modelled retries as downside-free — so the evaluation was structurally incapable of penalising the behaviour. A policy and its grader agreeing on an assumption is not a test of it.
+
+*Done:* `OracleParams.silent_retry_irritation` names the assumption, defaults to `0.0` so no published number moved, and is a sweep axis in `eval/sensitivity.py`. The cost of the rule being wrong is now measurable instead of invisible.
+*Still to do:* carry that penalty into the Lagrangian objective so the allocator rations retries rather than taking every one.
+
+**3. Batch Latency** — *addressed*
+The batch allocator runs per merchant per planning window, which is the wrong shape for an abandoned cart whose value decays in minutes.
+
+*Done:* `allocator/streaming.py`. The Lagrangian solve already produces the fix — λ_contact and λ_discount are prices, and a price turns a combinatorial decision into a local one. The shadow price is fitted offline from the batch solve that already runs; the online path is a comparison and a budget decrement. Measured at **99.87% of batch margin, 1.6 µs/event**, with named refusal reasons and a `utilisation` signal for price staleness.
+
+The honest caveat: an online policy has no hindsight, so it cannot beat batch on the same population. `admission_gap()` reports the shortfall rather than asserting it is small, and λ is a property of the population — a shifted mix (a sale, an outage, a festival) misprices contacts until the nightly refit.
 
 **4. LLM Under-utilization**
 The LLM acts as a classifier and copywriter. Given that TRAI DLT templates dictate exact strings, generating copy is a waste of compute.

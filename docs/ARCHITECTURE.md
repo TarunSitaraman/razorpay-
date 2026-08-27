@@ -147,15 +147,36 @@ Multi-dimensional knapsack, so exact solve is NP-hard. Lagrangian relaxation
 prices each budget and bisects until they bind. The dual is a provable upper
 bound, which makes the optimality claim checkable rather than asserted:
 
-| | Lagrangian only | + greedy + fill |
-|---|--:|--:|
-| exact optimum | 89% | **99%** |
-| mean ratio | 0.9731 | **0.9996** |
-| **worst case** | **0.187** | **0.947** |
-| budget violations | 0 | 0 |
+Measured against brute-force enumeration over **400** random instances from the
+suite's own generator — not against the relaxation's own bound, which would
+flatter it:
+
+| | Lagrangian only | + greedy + fill | + exchange pass |
+|---|--:|--:|--:|
+| mean ratio | 0.9731 | 0.9998 | **1.0000** |
+| **worst case** | **0.187** | **0.944** | **1.0000** |
+| instances below 0.95 | many | 1 of 400 | **0** |
+| budget violations | 0 | 0 | 0 |
+
+Two things this table is careful about.
+
+**The middle column's worst case was found by widening the sample, not by
+running the suite.** The assertion in `tests/unit/test_allocator.py` is `>= 0.95`
+over 60 seeds, and it passed. The same generator extended to 400 seeds contains
+an instance at 0.944 — the 124th. The repository's own rule ("distrust any metric
+that looks fine on one sample") applied to the repository, and it is why the
+exchange pass exists.
+
+**"1.0000" is a statement about instances small enough to enumerate**, which is
+what brute force requires. At production scale there is no exact optimum to
+compare against, so the honest number is the dual certificate, which reports
+≥ 0.9999 on the measured populations. `tests/unit/test_allocator_certificate.py`
+checks the two properties that make that certificate worth quoting: the bound
+never falls below the true optimum, and the reported ratio never overstates the
+true one.
 
 The first cut looked fine on the average and was quietly catastrophic in the
-tail. Taking the better of two heuristics costs one linear pass.
+tail. Each pass after it costs one linear sweep.
 
 ### The costless-action rule
 
@@ -180,6 +201,94 @@ regulatory limit, not an economic judgement, which is where it belongs.
 
 The same mistake had been made in four places. The invariant is now asserted
 once, over the rules as a set.
+
+**And the part of that argument which is false.** "A silent retry cannot reach
+the customer" is not true in India: the issuer sends a debit-attempt SMS
+regardless, and a failed mandate presentation can carry a bank charge. So the
+rule rests on an empirical assumption about customer experience, not on a
+definition.
+
+Worse, until recently the *grader* shared it — the outcome oracle also modelled
+retries as downside-free — which made the evaluation structurally incapable of
+penalising the behaviour. A policy and its grader agreeing on an assumption is
+not a test of it.
+
+`OracleParams.silent_retry_irritation` now names the assumption and defaults to
+`0.0`, so no published number moved. It is a sweep axis in
+[the sensitivity harness](#the-assumption-frontier), which is the only way to
+find out what the rule costs if it is wrong.
+
+---
+
+### Streaming allocation
+
+The batch allocator solves one knapsack per merchant per planning window. That
+is the right shape for an overdue invoice and the wrong shape for an abandoned
+cart, where the value of acting decays in minutes. A recovery system that can
+only decide on a cron schedule has already lost its highest-intent surface.
+
+No second solver was needed. The Lagrangian solve produces more than an
+allocation — it produces `lambda_contact` and `lambda_discount`, the marginal
+value of one more unit of each budget. Those are prices, and a price turns a
+combinatorial batch decision into a local one:
+
+```
+fund iff  margin − λ_c · contacts − λ_d · discount > 0
+```
+
+which requires no knowledge of the other candidates. So `allocator/streaming.py`
+fits the shadow price offline from the batch solve that already runs nightly,
+and the online path is a comparison plus a budget decrement.
+
+| | |
+|---|--:|
+| margin captured vs. batch | **99.87%** |
+| admission latency | **1.6 µs/event** |
+| solver in the request path | none |
+
+**What it costs, stated plainly.** An online policy has no hindsight — it cannot
+decline a mediocre candidate at 09:00 because a better one arrives at 16:00. So
+it is *strictly* worse than batch on the same population, and `admission_gap()`
+measures the shortfall rather than asserting it is small. Refusals carry named
+reasons (`below_price`, `budget_exhausted`, `customer_capped`) for the same
+reason stops do: "we did not contact this person" is a fact the merchant is owed
+an explanation for.
+
+**Where the price goes stale.** λ is a property of the population, not of the
+candidate. If the mix shifts — a sale, an outage, a festival — yesterday's price
+misvalues today's contacts and the budget is spent too fast or too slow.
+`utilisation` exposes that drift; the intended cadence is a nightly refit.
+
+---
+
+### The assumption frontier
+
+The evaluation trains a learner on data from `datagen/response.py` and grades its
+decisions with that same oracle. The usual defences — the archetype is never a
+feature, treatment was randomised — answer a *narrower* objection than the one
+worth raising. They establish the learner did not cheat. They cannot establish
+that the structure it learned exists in real payment data.
+
+So `eval/sensitivity.py` varies each load-bearing assumption and reports where
+the thesis stops holding. Refitting happens at **every grid point**, because the
+question is whether uplift arbitration pays given that you fitted it in that
+world — the position a real deployment is in.
+
+Every component in the path is the production component: the oracle, the feature
+frame *including its leakage guard* (`frame_from_rows` is shared with the
+database path precisely so the two cannot drift), the X-learner, the allocator,
+the bootstrap. Nothing is reimplemented, because a sweep that reimplemented the
+thing it tests would be measuring its own reimplementation.
+
+What is absent is the database, Kafka, the policy engine and the stopping rules.
+Those are identical across arms by construction, so they cannot explain a
+difference between arms — the only quantity the sweep reports. The upside: it
+runs from a clean checkout with no services, in about a minute.
+
+```bash
+make sensitivity              # all axes
+make sensitivity AXIS=persuadable_uplift
+```
 
 ---
 
@@ -267,7 +376,11 @@ That is also the token-cost answer.
 ## Known limits
 
 - **Synthetic data throughout**, fixed seed, generated by `datagen/`. Never
-  presented as Razorpay data.
+  presented as Razorpay data. The load-bearing consequence — that the headline
+  result is graded by the same model that produced the training data — is
+  answered by the assumption frontier above rather than by argument: `make
+  sensitivity` reports where the thesis stops holding, and there are axes on
+  which it does.
 - **`sandbox/` is a simulator** of Razorpay's public REST and webhook contract.
   `api.razorpay.com` is unreachable from the build environment and there are no
   keys. The adapter seam is what makes "swap in live keys" a config change

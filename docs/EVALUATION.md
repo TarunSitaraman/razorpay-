@@ -182,6 +182,314 @@ and the gap between them is reported rather than papered over.
 
 ---
 
+## 3b. The assumption frontier — answering "you built a world where you win"
+
+Section 3 establishes that the *estimator* is honest. It does not touch a
+different and sharper objection: this evaluation trains a learner on data
+produced by `datagen/yukti_datagen/response.py` and then grades its decisions
+with that same oracle.
+
+The defences usually offered — the archetype is never a feature, treatment was
+randomised — answer a narrower question than the one being asked. They establish
+that the learner did not *cheat*: that it recovered the generator's structure
+from observables rather than reading the label. Neither establishes that the
+structure exists in real Indian payment data.
+
+It cannot. `max_uplift[PERSUADABLE] = 0.46` against `max_uplift[SURE_THING] =
+0.04` is an **input** chosen by the author, and the headline follows from it
+arithmetically. A point estimate drawn from a world its author wrote is not
+evidence about the world.
+
+So the reply is not a defence. It is a sweep:
+
+```bash
+make sensitivity                            # every axis
+make sensitivity AXIS=persuadable_uplift    # one
+```
+
+`control/yukti/eval/sensitivity.py` varies each load-bearing assumption across a
+plausible range and reports where the thesis stops holding, **refitting the
+model at every grid point** — because the question is whether uplift arbitration
+pays *given that you fitted it in that world*, which is the position a real
+deployment is in. Fitting once in the default world and scoring elsewhere would
+measure transfer, which is a different question.
+
+Every component in the path is the production component: the oracle, the feature
+frame *including its leakage guard* (`frame_from_rows` is shared with the
+database path precisely so the two cannot drift), the X-learner, the allocator,
+the customer-level bootstrap. Nothing is reimplemented, because a sweep that
+reimplemented the thing it tests would be measuring its own reimplementation.
+
+**It needs no services.** The world is generated, explored, learned and graded in
+process, so anyone can reproduce the frontier from a clean clone in about a
+minute. That property is not convenience — it is the whole point of a rebuttal
+to "your result depends on your simulator."
+
+### The axes, and what each one is worth arguing about
+
+| axis | headline assumes | the sceptic's position |
+|---|--:|---|
+| `persuadable_uplift` | 0.46 | Published uplift effects in retention marketing are usually single-digit points. |
+| `sure_thing_uplift` | 0.04 | If sure things have real headroom too, propensity and uplift rank alike and there is nothing to sell. |
+| `sleeping_dog_share` | 0.15 | If customers that contact actively harms do not exist, avoiding them is worth nothing. |
+| `silent_retry_irritation` | 0.0 | A silent retry is not free: the issuer SMSes the customer on every debit attempt. |
+| `fatigue_decay` | 0.78 | At 1.0 there is no cross-agent fatigue, and per-customer arbitration earns nothing. |
+
+`silent_retry_irritation` deserves its own note. The allocator funds every
+costless invisible action *without consulting its margin*, on the argument that
+such an action has no downside branch. Until this axis existed, the **grader
+shared that assumption** — the oracle also modelled retries as downside-free — so
+the evaluation was structurally incapable of penalising the behaviour. A policy
+and its grader agreeing on an assumption is not a test of it. The default is
+still `0.0`, so no previously published number moved; what changed is that the
+cost of being wrong is now measurable instead of invisible.
+
+### The result
+
+Run at 20,000 exploration cases per fit, 3,500 planning cases, a 200-contact
+budget, seed 20260822. Every number below is `artifacts/sensitivity.json`,
+rendered by `scripts/frontier_markdown.py` rather than transcribed — a
+transcribed number in the one section whose whole purpose is "do not take my
+word for it" would be worse than no section.
+
+**Summary:**
+
+| axis | headline assumes | crossover | past it, the winner is |
+|---|--:|--:|---|
+| `persuadable_uplift` | 0.46 | below ~0.097 | nobody — stop contacting |
+| `sure_thing_uplift` | 0.04 | above ~0.162 | propensity |
+| `sleeping_dog_share` | 0.15 | below ~0.019 | fixed cadence |
+| `silent_retry_irritation` | 0.0 | none in range | — |
+| `fatigue_decay` | 0.78 | none in range | — |
+
+Three of five axes contain a point where this system loses. Those are the rows
+that make the other two worth anything.
+
+**`sure_thing_uplift` is the one that matters most**, because it is the thesis's
+own argument running backwards. Uplift and propensity differ only insofar as
+"likely to pay" and "pays *because* we asked" come apart. Give sure things real
+headroom and they stop coming apart; past 0.162 the propensity ranker wins
+because past 0.162 it is simply correct. Anyone evaluating this should ask what
+that number actually is for their book, because it decides whether the causal
+machinery is worth its complexity.
+
+**Two axes show no crossover, and neither is a victory.**
+
+`fatigue_decay` reaching 1.0 does not remove Niyama's edge — it *increases*
+every arm's returns, because contacts stop decaying, and Niyama captures more of
+the larger pool. The axis therefore does not isolate the value of cross-agent
+arbitration; it would need a design where fatigue is removed while total
+contactable value is held fixed. Stated as a limitation rather than a result.
+
+`silent_retry_irritation` moves nothing because retries and contacts turn out to
+go to **disjoint** case populations: `_menu` offers a silent retry only where the
+decline is `retryable_silently` (funds and system failures) and a contact only
+where it is `customer_actionable` (auth failures, expired cards). Measured
+directly, the overlap between the cases Niyama contacts and the cases retry-only
+acts on is **zero**. So pricing retry irritation shifts the shared baseline for
+every arm equally and cancels out of a contact-attributable number. That is a
+real finding about the action space, and it also means this axis cannot be used
+to argue the costless-action rule is safe — it is measuring something else.
+
+### Per-axis detail
+
+#### `persuadable_uplift`
+
+Headroom for the only profitable archetype. The single number the whole thesis rests on; the headline run assumes 0.46. 
+
+| `persuadable_uplift` | fixed cadence | propensity | **Niyama** | winner |
+|---|--:|--:|--:|---|
+| 0.46 | -22,022 | 3,838 | **26,936** | **Niyama** |
+| 0.34 | -22,022 | -3,176 | **25,542** | **Niyama** |
+| 0.24 | -22,022 | -10,710 | **1,295** | **Niyama** |
+| 0.16 | -43,606 | -10,420 | **11,745** | **Niyama** |
+| 0.1 | -43,606 | -10,418 | **843** | **Niyama** |
+| 0.06 | -43,606 | -10,460 | **-9,464** | retry-only (nobody should contact) |
+| 0.03 | -43,606 | -10,521 | **-9,486** | retry-only (nobody should contact) |
+
+**Crossover ≈ 0.097** — below this the uplift objective no longer pays for itself.
+
+| assumption | arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|---|--:|--:|--:|--:|
+| 0.46 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.46 | propensity | 3 | 168 | 0 | 29 |
+| 0.46 | **Niyama** | 66 | 96 | 17 | 21 |
+| 0.34 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.34 | propensity | 4 | 167 | 0 | 29 |
+| 0.34 | **Niyama** | 76 | 91 | 17 | 16 |
+| 0.24 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.24 | propensity | 4 | 165 | 0 | 31 |
+| 0.24 | **Niyama** | 48 | 104 | 25 | 23 |
+| 0.16 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.16 | propensity | 4 | 163 | 0 | 33 |
+| 0.16 | **Niyama** | 56 | 100 | 23 | 21 |
+| 0.1 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.1 | propensity | 3 | 166 | 0 | 31 |
+| 0.1 | **Niyama** | 47 | 102 | 29 | 22 |
+| 0.06 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.06 | propensity | 4 | 165 | 0 | 31 |
+| 0.06 | **Niyama** | 45 | 113 | 20 | 22 |
+| 0.03 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.03 | propensity | 2 | 165 | 0 | 33 |
+| 0.03 | **Niyama** | 43 | 115 | 19 | 23 |
+
+#### `sleeping_dog_share`
+
+Population share of customers that contact actively harms. If they do not exist, avoiding them is worth nothing. 
+
+| `sleeping_dog_share` | fixed cadence | propensity | **Niyama** | winner |
+|---|--:|--:|--:|---|
+| 0.15 | -22,022 | 3,838 | **26,936** | **Niyama** |
+| 0.11 | -22,022 | 121 | **46,140** | **Niyama** |
+| 0.07 | -896 | 2,327 | **32,769** | **Niyama** |
+| 0.04 | -896 | -7,249 | **18,064** | **Niyama** |
+| 0.02 | 21,818 | 12,756 | **22,503** | **Niyama** |
+| 0 | 32,724 | 12,056 | **15,762** | fixed cadence |
+
+**Crossover ≈ 0.019** — below this the uplift objective no longer pays for itself.
+
+| assumption | arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|---|--:|--:|--:|--:|
+| 0.15 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.15 | propensity | 3 | 168 | 0 | 29 |
+| 0.15 | **Niyama** | 66 | 96 | 17 | 21 |
+| 0.11 | fixed cadence | 41 | 76 | 56 | 27 |
+| 0.11 | propensity | 2 | 177 | 0 | 21 |
+| 0.11 | **Niyama** | 87 | 77 | 18 | 18 |
+| 0.07 | fixed cadence | 36 | 86 | 61 | 17 |
+| 0.07 | propensity | 1 | 188 | 0 | 11 |
+| 0.07 | **Niyama** | 71 | 93 | 20 | 16 |
+| 0.04 | fixed cadence | 41 | 91 | 59 | 9 |
+| 0.04 | propensity | 1 | 192 | 0 | 7 |
+| 0.04 | **Niyama** | 77 | 96 | 16 | 11 |
+| 0.02 | fixed cadence | 39 | 94 | 62 | 5 |
+| 0.02 | propensity | 0 | 197 | 0 | 3 |
+| 0.02 | **Niyama** | 74 | 104 | 16 | 6 |
+| 0 | fixed cadence | 39 | 97 | 64 | 0 |
+| 0 | propensity | 1 | 199 | 0 | 0 |
+| 0 | **Niyama** | 77 | 111 | 12 | 0 |
+
+#### `sure_thing_uplift`
+
+Headroom for customers who pay anyway. As this rises, propensity and uplift converge and the distinction stops paying. 
+
+| `sure_thing_uplift` | fixed cadence | propensity | **Niyama** | winner |
+|---|--:|--:|--:|---|
+| 0.04 | -22,022 | 3,838 | **26,936** | **Niyama** |
+| 0.1 | -10,334 | -3,382 | **12,608** | **Niyama** |
+| 0.18 | -10,334 | 55,232 | **51,500** | propensity |
+| 0.26 | 12,064 | 72,781 | **69,402** | propensity |
+| 0.34 | 33,806 | 143,320 | **112,987** | propensity |
+
+**Crossover ≈ 0.162** — above this the uplift objective no longer pays for itself.
+
+| assumption | arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|---|--:|--:|--:|--:|
+| 0.04 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.04 | propensity | 3 | 168 | 0 | 29 |
+| 0.04 | **Niyama** | 66 | 96 | 17 | 21 |
+| 0.1 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.1 | propensity | 4 | 167 | 0 | 29 |
+| 0.1 | **Niyama** | 70 | 94 | 17 | 19 |
+| 0.18 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.18 | propensity | 3 | 170 | 0 | 27 |
+| 0.18 | **Niyama** | 63 | 96 | 21 | 20 |
+| 0.26 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.26 | propensity | 5 | 165 | 0 | 30 |
+| 0.26 | **Niyama** | 63 | 101 | 17 | 19 |
+| 0.34 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.34 | propensity | 4 | 168 | 0 | 28 |
+| 0.34 | **Niyama** | 57 | 111 | 13 | 19 |
+
+#### `silent_retry_irritation`
+
+Per-attempt opt-out risk of a retry the merchant cannot see. The allocator funds costless actions unconditionally on the assumption this is zero. 
+
+| `silent_retry_irritation` | fixed cadence | propensity | **Niyama** | winner |
+|---|--:|--:|--:|---|
+| 0 | -22,022 | 3,838 | **26,936** | **Niyama** |
+| 0.02 | -22,022 | -3,363 | **35,484** | **Niyama** |
+| 0.05 | -22,022 | -20,292 | **3,771** | **Niyama** |
+| 0.09 | -22,022 | -3,079 | **44,701** | **Niyama** |
+| 0.15 | -22,022 | -3,362 | **37,413** | **Niyama** |
+
+*No crossover in the swept range.*
+
+| assumption | arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|---|--:|--:|--:|--:|
+| 0 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0 | propensity | 3 | 168 | 0 | 29 |
+| 0 | **Niyama** | 66 | 96 | 17 | 21 |
+| 0.02 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.02 | propensity | 2 | 169 | 0 | 29 |
+| 0.02 | **Niyama** | 75 | 88 | 17 | 20 |
+| 0.05 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.05 | propensity | 4 | 165 | 0 | 31 |
+| 0.05 | **Niyama** | 73 | 91 | 16 | 20 |
+| 0.09 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.09 | propensity | 4 | 165 | 0 | 31 |
+| 0.09 | **Niyama** | 70 | 95 | 19 | 16 |
+| 0.15 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.15 | propensity | 4 | 164 | 0 | 32 |
+| 0.15 | **Niyama** | 72 | 94 | 17 | 17 |
+
+#### `fatigue_decay`
+
+Response decay per prior contact. At 1.0 there is no cross-agent fatigue and per-customer arbitration earns nothing. 
+
+| `fatigue_decay` | fixed cadence | propensity | **Niyama** | winner |
+|---|--:|--:|--:|---|
+| 0.78 | -22,022 | 3,838 | **26,936** | **Niyama** |
+| 0.85 | -22,022 | 8,076 | **42,391** | **Niyama** |
+| 0.92 | -22,022 | 3,710 | **60,865** | **Niyama** |
+| 0.97 | -22,022 | -4,056 | **57,935** | **Niyama** |
+| 1 | -11,076 | 812 | **73,879** | **Niyama** |
+
+*No crossover in the swept range.*
+
+| assumption | arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|---|--:|--:|--:|--:|
+| 0.78 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.78 | propensity | 3 | 168 | 0 | 29 |
+| 0.78 | **Niyama** | 66 | 96 | 17 | 21 |
+| 0.85 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.85 | propensity | 4 | 167 | 0 | 29 |
+| 0.85 | **Niyama** | 73 | 92 | 17 | 18 |
+| 0.92 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.92 | propensity | 3 | 166 | 0 | 31 |
+| 0.92 | **Niyama** | 74 | 89 | 17 | 20 |
+| 0.97 | fixed cadence | 42 | 69 | 54 | 35 |
+| 0.97 | propensity | 4 | 166 | 0 | 30 |
+| 0.97 | **Niyama** | 80 | 80 | 19 | 21 |
+| 1 | fixed cadence | 42 | 69 | 54 | 35 |
+| 1 | propensity | 6 | 164 | 0 | 30 |
+| 1 | **Niyama** | 78 | 81 | 26 | 15 |
+
+
+### What this does and does not establish
+
+**Does:** that the advantage is bounded, that the boundaries are locatable, and
+that the targeting mechanism — not merely the money — separates the arms. The
+contact mix is the strongest single artifact here: in the default world the
+propensity arm reaches **3** persuadables out of 200 contacts against Niyama's
+**66**, and that ratio is stable across every grid point, unlike the rupee
+columns.
+
+**Does not:** establish significance at any individual grid point. Niyama's
+bootstrap CI at the default world is [−6,35,261, +22,22,373] per 1,000
+opportunities and contains zero — precisely as §3's power analysis says it must,
+since a 200-contact sample cannot resolve a 0.024σ effect. The signal is the
+shape of the curve and the targeting counts. Anyone quoting a single cell of
+these tables as a measured effect is misreading them, and that includes me.
+
+**Also does not:** tell you the assumptions are right. It tells you which ones
+the conclusion is hostage to. `max_uplift[PERSUADABLE]` remains a number chosen
+by the author; what changed is that its influence is now visible and bounded
+instead of buried in a module constant.
+
+
+---
+
 ## 4. The upstream gate
 
 The evaluation is only meaningful if uplift is learnable from observable

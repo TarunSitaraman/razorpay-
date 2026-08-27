@@ -20,7 +20,7 @@ This is an event-driven, four-plane distributed system built for exactly-once ex
 
 ### 2. The Lagrangian Allocator
 Current industry tools limit budgets per agent. Niyama arbitrates globally across all agents. 
-It maximizes `Σ (uplift × amount × (1 − mdr)) − discount − channel_cost` subject to daily merchant budgets and NPCI fatigue caps. The problem is solved via Lagrangian relaxation, achieving 99.96% of the exact optimal margin. Scarce resources are never wasted on unrecoverable cases.
+It maximizes `Σ (uplift × amount × (1 − mdr)) − discount − channel_cost` subject to daily merchant budgets and NPCI fatigue caps. The problem is solved via Lagrangian relaxation plus a density-greedy alternative, a fill pass and a windowed exchange pass — matching the exact optimum on all 400 enumerable test instances, with a tested dual certificate standing in at production scale. Scarce resources are never wasted on unrecoverable cases.
 
 ### 3. Event Correctness
 - **Exactly-Once Effect**: Four layers of deduplication (HMAC -> Redis TTL -> Postgres Unique Index -> Derived Idempotency Ledger) ensure a duplicated webhook never causes a double charge.
@@ -31,15 +31,43 @@ It maximizes `Σ (uplift × amount × (1 − mdr)) − discount − channel_cost
 The LLM acts strictly as a proposer. It never decides amounts, policy verdicts, or initiates refunds. 
 It performs root-cause analysis on retrieved evidence, classifies free-text decline reasons, and interpolates DLT-compliant channel copy. Its output schema only allows it to *remove* action candidates.
 
-### 5. OpenTelemetry
-The Python control plane is instrumented with the standard OpenTelemetry SDK. Traces for FastAPI, HTTPX, and SQLAlchemy queries are exported to the ConsoleSpanExporter, ready for OTLP production environments.
+### 5. Batch and Streaming Allocation
+A batch knapsack is the right shape for an overdue invoice and the wrong one for an abandoned cart, where intent decays in minutes. The Lagrangian solve already yields the fix: `lambda_contact` and `lambda_discount` are *prices*, and a price turns a combinatorial decision into a local one. `allocator/streaming.py` computes the shadow price offline and admits events in real time — no solver in the request path.
 
-### 6. The MCP Server
-A built-in Model Context Protocol (MCP) Server (`control/yukti/mcp_server.py`) exposes the core domain logic—revenue at risk, pipeline counts, and stopping rules—as standardized tools for external agents.
+Measured: **99.87% of batch margin at 1.6 µs/event**, with named refusal reasons (`below_price`, `budget_exhausted`, `customer_capped`) and a `utilisation` signal for price staleness. Online has no hindsight, so it *cannot* beat batch; `admission_gap` reports the shortfall rather than asserting it is small.
+
+### Scaffolding, named as such
+Two items are wired end-to-end but are not load-bearing, and are listed here rather than beside the allocator so the capability list stays honest:
+
+- **OpenTelemetry** — FastAPI, HTTPX and SQLAlchemy are instrumented with the standard SDK, exporting to `ConsoleSpanExporter`. That is a seam for OTLP, not observability.
+- **MCP server** — `control/yukti/mcp_server.py` exposes revenue-at-risk, pipeline counts and stopping rules as tools. Useful, peripheral to the thesis.
 
 ---
 
 ## 📊 Evaluation Results
+
+### What is being claimed, and how strongly
+
+This project is evaluated inside a simulator it also wrote. That is stated first
+because it determines how much any number below is worth, and because the
+defences usually offered for it — the latent archetype is never a feature,
+treatment was randomised — answer a narrower objection than the one a reviewer
+should raise. They establish the learner did not *cheat*. They cannot establish
+that the structure it learned exists in real Indian payment data.
+
+So the results come in three tiers, strongest first:
+
+| Tier | What it establishes | Depends on the simulator? |
+|---|---|---|
+| **Mechanism** | The allocator matches the exact optimum on every enumerable instance, budgets are never breached, holdouts are never treated, the audit chain detects tampering. | No — properties, checked against exact enumeration and mutation tests. |
+| **Frontier** | *Which assumptions about customers the uplift thesis needs in order to pay.* | The simulator is the instrument, not the evidence. |
+| **Headline** | Uplift beat propensity by ₹4.05L on one 3,475-case book. | **Yes, entirely.** |
+
+The headline is the weakest of the three and is presented last for that reason.
+
+---
+
+### Tier 1 — Mechanism
 
 | The Bar | How We Met It | Status |
 |---|---|---|
@@ -50,14 +78,116 @@ A built-in Model Context Protocol (MCP) Server (`control/yukti/mcp_server.py`) e
 | **Audit trail** | Append-only hash-chained `audit_event` per merchant. Tamper tests detect edits/deletions. | ✅ |
 | **Bounded workflow** | `ActionKind` schema omits refund/payout/mandate-cancel entirely at the type level. | ✅ |
 
-### The Headline Result (NBFC Lending Book of 3,475 cases)
+**Allocation quality**, measured against brute-force enumeration over 400 random
+instances — not against the relaxation's own bound, which would flatter it:
+mean **1.0000**, worst **1.0000**, zero budget violations. At production scale
+there is no optimum to enumerate, so the quotable number is the dual
+certificate, which reports ≥ 0.9999 and is itself tested
+(`tests/unit/test_allocator_certificate.py`) for the two properties that make it
+meaningful: the bound never falls below the true optimum, and the ratio never
+overstates the true one.
+
+Worth volunteering: the suite previously asserted `>= 0.95` over 60 seeds and
+passed, while the *same generator* extended to 400 seeds contained an instance at
+**0.944**. The acceptance criterion had been fitted to its sample. A windowed
+exchange pass closes it; the widened range is what stops it reopening.
+
+---
+
+### Tier 2 — The assumption frontier
+
+The honest reply to *"you built a world where you win"* is not a defence, it is a
+sweep. `python -m yukti.eval.cli sensitivity` varies each load-bearing assumption
+across a plausible range and reports **where Niyama stops winning** — refitting
+the model at every grid point, because the question is whether uplift arbitration
+pays given that you fitted it in that world, which is the position a deployment
+is actually in.
+
+It needs no database and no services: the world is generated, explored, learned
+and graded in process, so the frontier is reproducible from a clean clone in
+about a minute. Every component in the path is the production component — the
+same oracle, the same feature frame *including its leakage guard*, the same
+X-learner, the same allocator, the same bootstrap.
+
+**The frontier** (`artifacts/sensitivity.json`, regenerate with `make sensitivity`).
+Contact-attributable margin per cycle, measured against retry-only so the free-retry
+mass every arm shares cancels out and only the contact decision remains:
+
+| assumption swept | headline assumes | Niyama stops winning at | who wins past it |
+|---|--:|--:|---|
+| `persuadable_uplift` — headroom on the only profitable archetype | 0.46 | **below ≈ 0.097** | nobody: stop contacting |
+| `sure_thing_uplift` — headroom on customers who pay anyway | 0.04 | **above ≈ 0.162** | propensity |
+| `sleeping_dog_share` — share the contact actively harms | 0.15 | **below ≈ 0.019** | fixed cadence |
+| `silent_retry_irritation` — opt-out risk of an "invisible" retry | 0.0 | no crossover in range | — |
+| `fatigue_decay` — response decay per prior contact | 0.78 | no crossover in range | — |
+
+Read plainly, that says: **the uplift objective needs persuadables to have at least
+~10 points of headroom, and needs sure-things to have less than ~16.** Outside that
+band it is not worth the complexity, and **three of the five axes contain a point
+where this system loses** — to propensity, to fixed cadence, and to not contacting
+anyone at all. Those rows are the reason to believe the others.
+
+`sure_thing_uplift` is the one to sit with. It is not a robustness quibble — it is
+the thesis's own logic running in reverse. If customers who would have paid anyway
+*also* respond strongly to contact, then P(recover | treated) and uplift rank the
+same people and the causal machinery buys nothing. Propensity wins past 0.162
+because past 0.162 propensity is *right*.
+
+**The mechanism, which is far more stable than the money.** Ground-truth archetype
+of who each arm actually spent its 200 contacts on, in the default world:
+
+| arm | persuadable | sure thing | lost cause | sleeping dog |
+|---|--:|--:|--:|--:|
+| fixed cadence | 42 | 69 | 54 | 35 |
+| propensity only | **3** | 168 | 0 | 29 |
+| **Niyama (uplift)** | **66** | 96 | 17 | 21 |
+
+Propensity spends 168 of 200 contacts on customers who were going to pay anyway and
+reaches **three** persuadables. That is the entire product thesis as a count rather
+than as a claim, and unlike the rupee columns it does not move with the seed.
+
+**What the frontier does not establish.** Each individual grid point is
+under-powered — Niyama's bootstrap CI at the default world is
+[−6,35,261, +22,22,373] per 1,000 and comfortably contains zero, exactly as the
+power analysis in [EVALUATION.md](docs/EVALUATION.md) §3 predicts it must. The
+signal is the *shape* across an axis and the targeting counts, not any single cell.
+A frontier is evidence about direction and boundaries; it is not a p-value.
+
+The frontier is the defensible claim. **The headline result is one point on it.**
+
+---
+
+### Tier 3 — The headline (NBFC lending book, 3,475 cases)
+
 | Arm | Contacts | Recovered | Contact-attributable ₹ | Per 1k (95% CI) |
 |---|--:|--:|--:|---|
 | Fixed Cadence | 86 | 1,158 | −1,31,998 | −37,985 [−104,025, +25,003] |
 | Propensity Only | 89 | 1,160 | −43,638 | −12,558 [−59,323, +24,368] |
 | **Niyama (uplift)** | **88** | **1,172** | **+3,61,255** | **+103,958 [+38,351, +174,141]** |
 
-Niyama spends the same budget as naive approaches but is the only arm whose confidence interval excludes zero.
+Niyama spends the same budget as naive approaches and is the only arm whose
+interval excludes zero. Note that propensity **recovers more cases than it is
+paid for** — the divergence between gross recovery and incremental margin is the
+entire product.
+
+**Two disclosures that belong beside this table, not below it.**
+
+**That confidence interval is narrower than reality permits.** It is a paired
+bootstrap against the oracle's *known* counterfactual — the one term a production
+estimator can never observe. It captures customer heterogeneity, not
+counterfactual uncertainty.
+
+**At this sample size, a real deployment could not tell these arms apart.** The
+true per-case effect is ₹315 against a per-case spread of ₹12,870 — an effect
+size of **0.024σ**, needing **136,887 cases** for 80% power against the 3,475
+available, a 39× shortfall. That is a property of the data (a Bernoulli draw times
+a heavy-tailed amount), not of the estimator, and no estimator fixes it. It is
+also the strongest argument in the repository: honest incrementality measurement
+has to pool across merchants, which makes federated inference a
+statistical-power necessity rather than a privacy nicety.
+
+Full working, including the arms that lost and the segment where the technique is
+close to irrelevant, in [EVALUATION.md](docs/EVALUATION.md).
 
 ---
 
@@ -76,7 +206,7 @@ make demo
 # 3. View the console
 open http://localhost:8080
 
-# 4. Run the 731-test suite
+# 4. Run the 1,260-test suite
 make test      
 ```
 
@@ -100,9 +230,9 @@ make test
 
 ```text
 edge/        Go — webhook ingest, producer
-control/     Python — domain, uplift intelligence, allocator, policy engine, dispatcher, eval, mcp_server
+control/     Python — domain, uplift intelligence, allocator (batch + streaming), policy engine, dispatcher, eval, mcp_server
 sandbox/     Razorpay-contract-shaped simulator
 datagen/     Synthetic world generator
 infra/       Terraform + Kubernetes manifests
-tests/       731 tests
+tests/       1,260 tests
 ```
