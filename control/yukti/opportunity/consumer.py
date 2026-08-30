@@ -9,6 +9,7 @@ and could silently drop a real payment failure.
 from __future__ import annotations
 
 import json
+import logging
 import signal
 from typing import Any
 
@@ -18,6 +19,8 @@ from rich.console import Console
 from yukti.config import settings
 from yukti.opportunity.service import IngestResult, MalformedEvent, OpportunityService
 from yukti.store.db import connect
+
+log = logging.getLogger(__name__)
 
 console = Console()
 
@@ -55,7 +58,60 @@ def build_consumer(group_id: str = "yukti-opportunity") -> Consumer:
         # Manual commit: the offset must not advance until the work is durable.
         "enable.auto.commit": False,
         "max.poll.interval.ms": 300_000,
+        # Left implicit, this defaults to 45s. The batch between polls does
+        # database work whose latency depends on the storage underneath, and a
+        # coordinator that goes briefly unreachable -- a broker restart, a busy
+        # host -- evicts the consumer mid-batch. Widening it does not paper over
+        # slow work (`max.poll.interval.ms` still bounds that); it stops a
+        # transient coordinator hiccup from tearing down a healthy consumer.
+        "session.timeout.ms": 120_000,
+        "heartbeat.interval.ms": 10_000,
     })
+
+
+# Commit failures that mean "you were removed from the group", not "the broker
+# is broken". Every one of them is recoverable by rejoining and re-consuming.
+_REBALANCE_ERRORS = frozenset({
+    KafkaError.ILLEGAL_GENERATION,
+    KafkaError.REBALANCE_IN_PROGRESS,
+    KafkaError.UNKNOWN_MEMBER_ID,
+})
+
+
+def _commit_offsets(consumer: Consumer, msg: Any) -> bool:
+    """Commit through `msg`, tolerating a rebalance. Returns whether it stuck.
+
+    A rebalance between the database commit and the offset commit is not a
+    failure state for this consumer, and it must not be fatal. The offsets stay
+    where they were, the events are re-delivered to whoever owns the partition
+    next, and `OpportunityService.ingest` de-duplicates them -- which is the
+    entire point of the four-layer dedup design, and the guarantee the module
+    docstring already claims.
+
+    Crashing here instead threw away a healthy process over a recoverable
+    condition. Observed: a slow batch against container storage let the session
+    lapse, the group rebalanced, and `commit()` raised ILLEGAL_GENERATION,
+    killing an ingest run 118,000 events in.
+
+    The one thing that would be wrong is committing anyway or exiting quietly.
+    Both are avoided: the caller keeps consuming, and the failure is reported.
+    """
+    try:
+        consumer.commit(msg, asynchronous=False)
+        return True
+    except KafkaException as exc:
+        err = exc.args[0]
+        if err.code() in _REBALANCE_ERRORS:
+            log.warning(
+                "offset commit skipped after rebalance (%s); events will be "
+                "re-delivered and de-duplicated", err.name(),
+            )
+            return False
+        raise
+
+
+class NoAssignment(RuntimeError):
+    """The consumer never received a partition assignment."""
 
 
 def run(
@@ -64,8 +120,23 @@ def run(
     idle_timeout_s: float = 5.0,
     quiet: bool = False,
     commit_every: int = 500,
+    assignment_timeout_s: float = 30.0,
 ) -> IngestResult:
-    """Consume until the stream goes idle or ``max_events`` is reached."""
+    """Consume until the stream goes idle or ``max_events`` is reached.
+
+    **"Idle" must mean "assigned, and nothing arriving."** An unassigned
+    consumer also polls empty, and conflating the two makes a slow group join
+    indistinguishable from an empty topic. That is not a theoretical distinction:
+    against a broker in a container, joining took longer than `idle_timeout_s`,
+    so `make consume` exited immediately, reported `0 events -> opened=0`, and
+    left 300,000 events unconsumed while looking like a clean run. The pipeline
+    then trained and planned on 805 cases instead of 23,864.
+
+    The failure shape is what makes it worth guarding: no exception, no non-zero
+    exit, just a quiet no-op wearing the costume of success. So the idle
+    countdown now starts only once partitions are actually assigned, and never
+    being assigned is an error rather than an empty result.
+    """
     cfg = settings()
     consumer = build_consumer(group_id)
     consumer.subscribe([cfg.topic_payments])
@@ -84,6 +155,9 @@ def run(
     pending = 0
     last_msg = None
     idle = 0.0
+    # Time spent waiting to join the group, kept separate from idle time.
+    waiting = 0.0
+    assigned = False
 
     dlq = build_dlq_producer()
 
@@ -93,6 +167,19 @@ def run(
             while not stopping:
                 msg = consumer.poll(0.5)
                 if msg is None:
+                    if not assigned:
+                        if consumer.assignment():
+                            assigned = True
+                        else:
+                            waiting += 0.5
+                            if waiting >= assignment_timeout_s:
+                                raise NoAssignment(
+                                    f"no partitions assigned for "
+                                    f"{cfg.topic_payments!r} after "
+                                    f"{assignment_timeout_s:.0f}s - is the "
+                                    f"broker reachable and the topic created?"
+                                )
+                            continue
                     idle += 0.5
                     if idle >= idle_timeout_s:
                         break
@@ -103,6 +190,7 @@ def run(
                     raise KafkaException(msg.error())
 
                 idle = 0.0
+                assigned = True
                 raw = msg.value()
                 try:
                     event = json.loads(raw)
@@ -141,7 +229,7 @@ def run(
                 # those four layers were built for.
                 if pending >= commit_every:
                     conn.commit()
-                    consumer.commit(last_msg, asynchronous=False)
+                    _commit_offsets(consumer, last_msg)
                     pending = 0
 
                 if not quiet and processed % 2000 == 0:
@@ -155,7 +243,7 @@ def run(
             if pending:
                 conn.commit()
                 if last_msg is not None:
-                    consumer.commit(last_msg, asynchronous=False)
+                    _commit_offsets(consumer, last_msg)
         finally:
             consumer.close()
 

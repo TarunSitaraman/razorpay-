@@ -32,6 +32,46 @@ def _json_default(o: object) -> str:
     raise TypeError(f"not JSON serialisable: {type(o)}")
 
 
+# librdkafka buffers locally before it sends. `queue.buffering.max.messages`
+# defaults to 100,000, and `produce()` raises rather than blocking once that
+# fills.
+MAX_BACKPRESSURE_WAIT_S = 30.0
+
+
+def _produce_with_backpressure(producer, **kwargs) -> None:
+    """Enqueue one event, waiting for room instead of dropping it.
+
+    `Producer.produce()` is asynchronous: it appends to a local queue that a
+    background thread drains. When the queue is full it raises `BufferError`
+    rather than blocking, and the caller is expected to serve delivery callbacks
+    to make room. `poll(0)` does not do that -- it returns immediately whether or
+    not space was freed -- so a loop that only polls every N messages will
+    eventually raise if it produces faster than the broker acknowledges.
+
+    That is not hypothetical. `make replay-fast` is unpaced by design and pushes
+    338,203 events; against a broker slower than the producer (a container on a
+    laptop, say) the queue fills around the 100,000th event and the whole replay
+    dies with `BufferError: Local: Queue full`, taking `make demo` with it. It
+    survived earlier because the previous environment's broker happened to keep
+    up -- a timing accident, not a property.
+
+    Polling with a real timeout is the fix the confluent-kafka docs prescribe:
+    it blocks, serves callbacks, and frees queue slots, after which the produce
+    is retried. Ordering is unaffected because the retry re-enqueues the same
+    message to the same partition before any later one is offered.
+    """
+    deadline = time.time() + MAX_BACKPRESSURE_WAIT_S
+    while True:
+        try:
+            producer.produce(**kwargs)
+            return
+        except BufferError:
+            if time.time() > deadline:
+                raise
+            # Blocks until callbacks are served, which is what frees space.
+            producer.poll(0.5)
+
+
 def replay(speed: float = 200.0, limit: int = 0, topic: str | None = None) -> int:
     """Publish events to Kafka, pacing wall-clock time by ``speed``.
 
@@ -91,7 +131,8 @@ def replay(speed: float = 200.0, limit: int = 0, topic: str | None = None) -> in
                 if drift > 0:
                     time.sleep(drift)
 
-            producer.produce(
+            _produce_with_backpressure(
+                producer,
                 topic=topic,
                 key=row["merchant_id"].encode(),   # per-merchant ordering
                 value=json.dumps(row, default=_json_default).encode(),
