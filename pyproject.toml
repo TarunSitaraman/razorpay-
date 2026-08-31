@@ -29,7 +29,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.40b0",
     "opentelemetry-instrumentation-httpx>=0.40b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.40b0",
-    "mcp>=1.0.0",
+    "mcp>=2.1",
 ]
 
 [project.optional-dependencies]
