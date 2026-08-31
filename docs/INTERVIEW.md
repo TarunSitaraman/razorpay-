@@ -32,7 +32,7 @@ and above all not a *defensible* incremental-lift number, which is where most of
 the difficulty actually was.
 
 **"Who pays for it?"**
-The merchant, out of margin it can be shown was created. Yukti is the only thing
+The merchant, out of margin it can be shown was created. Niyama is the only thing
 in this market that computes that number honestly — and it makes every *other*
 Agent Studio agent more sellable by proving its lift.
 
@@ -121,7 +121,7 @@ costless-action bugs and the holdout contamination were all caught.
 ## On what went wrong
 
 **"What's the worst bug you shipped?"**
-Yukti lost its own first evaluation to a fixed cadence, and the cause was four
+Niyama lost its own first evaluation to a fixed cadence, and the cause was four
 instances of one mistake. A silent retry costs nothing and the customer never
 sees it, so its true effect is small but never negative — it has no downside
 branch. That makes `margin > 0` a test of the *estimate's sign*, and near zero
@@ -154,7 +154,33 @@ looks fine on one sample — the bootstrap coverage test and the seven-split gat
 both exist because a single split looked fine and wasn't.
 
 **"What's unfinished?"**
-Very little. We initially scoped OpenTelemetry, an MCP server, and webhook replay optimisations for the final day, and all three were completed end-to-end to ensure the codebase is robust and fully observable. The edge webhook replay now pushes events optimally, the control plane is instrumented with standard OTel SDKs, and a functioning MCP Server (`control/yukti/mcp_server.py`) surfaces Yukti's internal planner analytics.
+Four things, and the first is the one that matters.
+
+**The evidence is simulated.** Every number below Tier 1 comes from a world this
+repository also wrote. The frontier sweep is the honest response to that — it
+reports where the thesis stops paying — but it is not the same as evidence from
+Indian payment data, and nothing in here can be.
+
+**Measurement does not pool across merchants.** `make eval` grades one
+merchant's book at a time, and the console says whose. The power analysis says a
+single book is 39× short of separating these arms, which is precisely the
+argument for federated inference — argued for in [EVALUATION.md](EVALUATION.md)
+§3, not built.
+
+**Observability is a seam, not a system.** FastAPI, HTTPX and SQLAlchemy are
+instrumented with the standard OTel SDK, exporting to `ConsoleSpanExporter`.
+Pointing that at OTLP is configuration; there is no collector, no dashboard, no
+alerting.
+
+**The streaming allocator's price is refreshed by hand.** `lambda` is computed
+offline and `utilisation` reports when it has gone stale, but nothing yet acts
+on that signal; a production deployment would want a refit loop behind it.
+
+The MCP server (`control/yukti/mcp_server.py`) is finished in the narrow sense
+that it runs and exposes four read-only tools — and it is worth saying it was
+broken until it was tested: it had been written against the `mcp` 1.x API,
+raised `AttributeError` on import, and the claim that it worked survived because
+nothing imported it.
 
 ---
 

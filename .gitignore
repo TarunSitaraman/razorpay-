@@ -36,3 +36,10 @@ artifacts/
 
 # Local credentials — never committed. .env.example is the template.
 .env
+
+# Local service logs and pidfiles (scripts/local/services.sh, make demo).
+*.log
+*.pid
+test_output.txt
+test_results.txt
+testcount.txt

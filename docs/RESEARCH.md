@@ -1,6 +1,6 @@
 # RESEARCH — what is actually known, and how it is known
 
-Every factual claim Yukti makes about Razorpay, about Indian payments
+Every factual claim Niyama makes about Razorpay, about Indian payments
 regulation, or about the competitive landscape is recorded here with its source.
 Two marks are used throughout and they are not decorative:
 
@@ -41,7 +41,7 @@ maps to a row in §2 below.
 | **Spark + Hudi + S3 + Trino + Alluxio on K8s** [C] | Spark and Hudi replicate OLTP data *and ingest microservice events* into an S3 lake; Trino for query; Alluxio as a K8s StatefulSet. ([Alluxio × Razorpay](https://www.alluxio.io/blog/how-trino-and-alluxio-power-analytics-at-razorpay)) |
 | **LangGraph multi-agent — Project Viveka** [C] | On-call RCA: stateful LangGraph workflow, **supervisor + parallel specialists**, two RAG stores, evidence written to **memory** so the supervisor reasons over stored facts rather than accumulated context. 30 min → 90 s. ([writeup](https://engineering.razorpay.com/project-viveka-from-30-minute-investigations-to-90-second-ai-analysis-e49ec9db2638)) |
 
-**Yukti copies Viveka's shape deliberately** — supervisor, specialists, evidence
+**Niyama copies Viveka's shape deliberately** — supervisor, specialists, evidence
 in a store — and departs from it on orchestration, using an event-sourced state
 machine rather than LangGraph. The reason is in ARCHITECTURE.md §Agent: the
 agent's state machine is already a Kafka consumer with Postgres checkpoints, so
@@ -59,9 +59,9 @@ row names the rule id that encodes it.
 | `RBI_PREDEBIT_24H` | Mandatory pre-debit notification **≥24 h** before every recurring deduction, carrying full transaction details and an opt-out path. FASTag/NCMC exempt. [C] | [Business Today](https://www.businesstoday.in/amp/personal-finance/news/story/rbi-auto-debit-rules-explained-what-new-changes-mean-for-your-upi-and-card-payments-528507-2026-05-02), [AMLEGALS checklist](https://amlegals.com/upi-autopay-and-recurring-payments-compliance-checklist-under-rbis-e-mandate-framework-2026/) |
 | `RBI_AFA_LIMIT` | No additional-factor authentication required up to **₹15,000** per transaction; **₹1,00,000** for mutual fund, insurance and credit-card-bill categories. Above that, AFA is required and an agent may not schedule the debit autonomously. [C] | same |
 | `NPCI_REPRESENT_CAP` | Failed debits may be re-presented only within NPCI-permitted windows, with per-reason-code attempt caps (e.g. **AP39 OTP-invalid → 3 attempts**). [C] | [Razorpay e-NACH playbook](https://razorpay.com/blog/e-nach-upi-autopay-for-nbfcs-the-complete-collections-playbook-for-2026), [NPCI error codes](https://docs.decentro.tech/reference/npci-error-codes-mandate-presentation) |
-| `TRAI_QUIET_HOURS` | Commercial communication restricted to daytime hours; Yukti encodes **09:00–21:00 IST**. [C] | TRAI TCCCPR; see note below |
+| `TRAI_QUIET_HOURS` | Commercial communication restricted to daytime hours; Niyama encodes **09:00–21:00 IST**. [C] | TRAI TCCCPR; see note below |
 | `TRAI_DLT_TEMPLATE` | Commercial SMS and WhatsApp must bind to a registered DLT template; free-form commercial messaging on those channels is not permitted. [C] | TRAI TCCCPR; see note below |
-| `DPDP_CONSENT` | Channel-level consent is required, and withdrawal of consent is binding and immediate. Yukti treats absence of a grant as refusal, and an opt-out as global across every agent and surface. [C] | DPDP Act 2023 |
+| `DPDP_CONSENT` | Channel-level consent is required, and withdrawal of consent is binding and immediate. Niyama treats absence of a grant as refusal, and an opt-out as global across every agent and surface. [C] | DPDP Act 2023 |
 
 **The consolidated framework.** RBI's e-mandate framework was consolidated
 effective 21 Apr 2026 (updated 22 Apr 2026) and covers UPI AutoPay, cards, PPIs
@@ -104,7 +104,7 @@ action, and the console shows it doing so, rule id and all.
 | **Chargebee / Recurly / Zuora / Paddle / GoCardless** [C] | Dunning campaigns, retry schedules, card updater. | Rule-based cadences; per-tool contact budgets; no arbitration across tools. |
 | **Yuno, Redux, Lago** [C] | "Smart dunning", fatigue scoring, "silent recovery"; cross-channel collision resolution named as a 2026 aspiration. ([Redux on dunning fatigue](https://www.reduxpayments.com/blog/dunning-fatigue-why-your-recovery-emails-are-killing-your-retention), [Yuno](https://y.uno/en/blog/most-retry-strategies-leave-money-on-the-table-smart-dunning-doesnt)) | Marketing copy rather than published method; no rails-level regulatory modelling; no Indian rails. |
 
-**Industry behaviour Yukti's synthetic world encodes** [C]: most recovery lands
+**Industry behaviour Niyama's synthetic world encodes** [C]: most recovery lands
 by day 14, and days 21–30 add fatigue rather than revenue; multi-channel adds
 roughly +23% *if sequenced* rather than blasted. These are the sources for
 `DIMINISHING_RETURNS_DAYS = 21` and for the multiplicative contact-fatigue decay
@@ -131,13 +131,13 @@ dashboard reports links sent and conversion rate, which is gross recovery.
 Butter publishes no lift methodology. Slicker's AABB design is the only
 published controlled measurement found. The inference is that a merchant paying
 per recovery action generally cannot tell whether the agent *caused* the
-payment. Yukti's own evaluation both demonstrates this and quantifies why it is
+payment. Niyama's own evaluation both demonstrates this and quantifies why it is
 hard — see §5.
 
 **G3 — "do nothing" has no product owner.** [I] Recovery products are built to
 act, and no dashboard surveyed reports money deliberately *not* chased. The
 inference is that suppression is under-served because it is commercially
-awkward to sell, not because it is unimportant. Yukti makes it a headline number.
+awkward to sell, not because it is unimportant. Niyama makes it a headline number.
 
 ---
 

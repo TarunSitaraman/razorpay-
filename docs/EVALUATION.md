@@ -30,7 +30,7 @@ same policy engine. Only the number being optimised changes.
 | **B1** | fixed cadence | The industry default: assume contact helps, act on what you can afford. |
 | **B2** | reason-code rules | A best-practice static routing table over the decline taxonomy. No model. |
 | **B3** | propensity only | P(recover \| treated). **The one that matters** — same features, same learner, different objective. |
-| **Y** | Yukti | Uplift: the causal effect of acting. |
+| **Y** | Niyama | Uplift: the causal effect of acting. |
 
 That constraint is why `control/yukti/scoring.py` exists at all. The scorer was
 made injectable during the integration work specifically so `eval/arms.py` could
@@ -69,19 +69,19 @@ Mean obligation ₹23,845.
 | B1 fixed cadence | 86 | 1,158 | 2,60,18,498 | 4,84,269 | **−1,31,998** | −37,985 [−104,025, +25,003] |
 | B2 reason-code | 88 | 1,158 | 2,60,18,498 | 4,84,267 | **−1,31,999** | −37,985 [−104,025, +25,004] |
 | B3 propensity | 89 | 1,160 | 2,61,07,743 | 5,72,629 | **−43,638** | −12,558 [−59,323, +24,368] |
-| **Y Yukti** | **88** | **1,172** | **2,65,16,297** | **9,77,522** | **+3,61,255** | **+103,958 [+38,351, +174,141]** |
+| **Y Niyama** | **88** | **1,172** | **2,65,16,297** | **9,77,522** | **+3,61,255** | **+103,958 [+38,351, +174,141]** |
 
 Three things in that table are the whole argument.
 
-**Yukti spends the same budget, not less.** 88 contacts against B2's 88 and B3's
+**Niyama spends the same budget, not less.** 88 contacts against B2's 88 and B3's
 89. It is not winning by abstaining; it is winning by choosing differently.
 
-**Only Yukti's interval excludes zero.** +103,958 [+38,351, +174,141] per 1,000
+**Only Niyama's interval excludes zero.** +103,958 [+38,351, +174,141] per 1,000
 opportunities. Every other arm's contact spending is negative with an interval
 that crosses zero — they cannot even establish that contacting helped.
 
 **Propensity is second-worst, and that is the prediction.** B3 has the same
-features and the same learner as Yukti. Substituting P(recover | treated) for
+features and the same learner as Niyama. Substituting P(recover | treated) for
 uplift is the single change that turns this into an ordinary recovery tool, and
 it costs ₹4,04,893 of net incremental margin. It spends its budget on customers
 who were going to pay anyway and burns sleeping dogs.
@@ -94,7 +94,7 @@ who were going to pay anyway and burns sleeping dogs.
 ### Segment sensitivity — the caveat that belongs next to the headline
 
 On the d2c_subscription book (mean obligation **₹597**) the same code produces
-+₹775 for Yukti against −₹844 and −₹1,856 for the rivals. The ordering holds,
++₹775 for Niyama against −₹844 and −₹1,856 for the rivals. The ordering holds,
 but every interval crosses zero.
 
 Contact economics scale with obligation value. A contact costs the same whether
@@ -118,7 +118,7 @@ technique pays in proportion to what is at stake.**
 At budget 0 every arm *is* retry-only, so the spread is exactly zero — a
 built-in correctness check, and a non-zero row there would be a bug. Above ~400
 the numbers saturate: the merchant contact pool stops binding and the
-per-customer cap takes over. Yukti is flat throughout, because its contact set
+per-customer cap takes over. Niyama is flat throughout, because its contact set
 is decided by which contacts have positive uplift rather than by how much budget
 exists. That is the "knows when to stop" claim, measured: **given unlimited
 budget it still contacts 88 people.**
@@ -153,7 +153,7 @@ complexity that sounded principled and did nothing.
 | | |
 |---|---|
 | per-case standard deviation | **₹12,870** |
-| Yukti's true per-case effect | **₹315** |
+| Niyama's true per-case effect | **₹315** |
 | effect size | **0.024σ** |
 | cases needed, 11% holdout, 80% power | **136,887** |
 | cases available | **3,475** — 39× short |
@@ -163,7 +163,7 @@ amount, so the noise-to-effect ratio is a property of the data. No estimator
 fixes it. The report prints this rather than hiding behind a wide interval:
 
 ```
-What it would take to measure this for real. Yukti's true effect is ₹315.02
+What it would take to measure this for real. Niyama's true effect is ₹315.02
 per case against a per-case spread of ₹12,869.87 — an effect size of 0.024 sigma.
 At a 11% holdout that needs 136,887 cases for 80% power; there are 3,475 —
 39x more than this merchant has.
@@ -547,7 +547,7 @@ costs nothing and the customer never sees it, so its true effect is small but
 never negative; it has no downside branch. That makes `margin > 0` a test of the
 *estimate's sign*, which near zero is close to a coin flip. The allocator,
 `negative_expected_margin`, `lost_cause` and `contact_budget_spent` each
-declined free money on that flip. Together they were the entire reason Yukti
+declined free money on that flip. Together they were the entire reason Niyama
 lost its own first evaluation to a fixed cadence. The invariant is now asserted
 once over the rules as a set in `tests/unit/test_costless_actions.py`, with the
 mirror case proving it does not pass by nothing ever stopping.

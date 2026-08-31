@@ -40,7 +40,7 @@ Measured: **99.87% of batch margin at 1.6 µs/event**, with named refusal reason
 Two items are wired end-to-end but are not load-bearing, and are listed here rather than beside the allocator so the capability list stays honest:
 
 - **OpenTelemetry** — FastAPI, HTTPX and SQLAlchemy are instrumented with the standard SDK, exporting to `ConsoleSpanExporter`. That is a seam for OTLP, not observability.
-- **MCP server** — `control/yukti/mcp_server.py` exposes revenue-at-risk, pipeline counts and stopping rules as tools. Useful, peripheral to the thesis.
+- **MCP server** — `control/yukti/mcp_server.py` exposes revenue-at-risk, pipeline counts, stopping rules and policy blocks as read-only tools; nothing on that surface can act. Useful, peripheral to the thesis.
 
 ---
 
@@ -73,7 +73,7 @@ The headline is the weakest of the three and is presented last for that reason.
 |---|---|---|
 | **Measured money** | Holdout incremental ₹ with 95% CIs, plus the sample size required for statistical power. | ✅ |
 | **Across a batch** | Lagrangian allocator over every open case per planning window. | ✅ |
-| **Compliant escalation** | RegPack: RBI 24h pre-debit · ₹15k AFA limit · NPCI attempt caps · TRAI 9–21h quiet hours · DPDP consent. | ✅ |
+| **Compliant escalation** | RegPack: RBI 24h pre-debit · ₹15k AFA limit · NPCI attempt caps · TRAI 9–21h quiet hours · DPDP consent. On the NBFC book the AFA ceiling refuses the allocator's first-choice action on 1,759 decisions covering ₹5.34 Cr (2,160 and ₹8.72 Cr across all merchants), and the console names the rule that did it. | ✅ |
 | **Stopping rules** | Named `StopReason` on every stop; the console explicitly groups the money deliberately not chased. | ✅ |
 | **Audit trail** | Append-only hash-chained `audit_event` per merchant. Tamper tests detect edits/deletions. | ✅ |
 | **Bounded workflow** | `ActionKind` schema omits refund/payout/mandate-cancel entirely at the type level. | ✅ |
@@ -206,9 +206,16 @@ make demo
 # 3. View the console
 open http://localhost:8080
 
-# 4. Run the 1,260-test suite
+# 4. Run the 1,276-test suite
 make test      
 ```
+
+No Kafka, no Postgres, no Redis? `make demo-light` runs the assumption sweep in
+process and writes the console a service-free result bundle, so the measured
+comparison is viewable from a cold clone in about a minute. The console labels
+it as the simulation it is, and the panels that genuinely need the stack say so
+rather than rendering blank.
+
 
 *(See [docs/DEMO.md](docs/DEMO.md))*
 
@@ -234,5 +241,5 @@ control/     Python — domain, uplift intelligence, allocator (batch + streamin
 sandbox/     Razorpay-contract-shaped simulator
 datagen/     Synthetic world generator
 infra/       Terraform + Kubernetes manifests
-tests/       1,260 tests
+tests/       1,276 tests
 ```

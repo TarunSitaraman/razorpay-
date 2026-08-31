@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-Yukti is an agent that runs a bounded recovery workflow across a whole batch.
+Niyama is an agent that runs a bounded recovery workflow across a whole batch.
 Everything below exists to answer one question: **how does an agent stay
 trustworthy when it acts on thousands of cases at once, under regulation, with
 someone else's money?**
@@ -57,7 +57,7 @@ Three mechanisms make that a guarantee rather than an intention:
 **The output surface cannot widen anything.** `Advice` carries one effective
 field: a set of action kinds to *remove*. There is nowhere to express "also try
 X". If the agent is unavailable, wrong, or prompt-injected, the worst it
-achieves is that Yukti considers fewer options and explains itself less well.
+achieves is that Niyama considers fewer options and explains itself less well.
 
 **Refunds are absent, not denied.** `ActionKind` has eight members and none is a
 refund, payout, settlement or mandate-cancellation. The tool layer has no
@@ -91,7 +91,7 @@ second discount or a second debit attempt.
 | Exactly-once **effect** | Idempotency ledger on a **derived fingerprint** — `blake2b(merchant ‖ obligation ‖ action_kind ‖ channel ‖ scheduled_day ‖ discount)`. Derived rather than minted, so a replayed cycle collides on `recovery_action.idempotency_key UNIQUE` instead of dispatching twice. |
 | Transactional side-effects | **Transactional outbox** — decision and action-intent commit in one Postgres transaction; a relay publishes to Kafka. No dual write. |
 | Agent crash mid-plan | Runs are event-sourced; plans are *proposals*; nothing executes until the dispatcher commits. A crash can lose planning work, never emit a duplicate action. |
-| Source of truth | Razorpay (here, the sandbox). Yukti never infers success from its own action succeeding — only from a correlated `payment.captured`. |
+| Source of truth | Razorpay (here, the sandbox). Niyama never infers success from its own action succeeding — only from a correlated `payment.captured`. |
 
 Four layers guard duplicates, and the ordering matters: the last one is the only
 one that protects **money**. Verified live — re-publishing the full event stream
