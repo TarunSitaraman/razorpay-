@@ -272,6 +272,55 @@ def policy_breakdown(
     return [dict(r) for r in rows]
 
 
+def refused_alternatives(
+    conn: psycopg.Connection, merchant_id: str | None = None
+) -> list[dict]:
+    """Actions a policy rule refused, recovered from the decisions themselves.
+
+    `policy_evaluation` only records the rule outcomes for the action that was
+    finally chosen, and by construction that action passed every rule — so the
+    regulatory pack shows up there as a wall of `allow` and the console can
+    never say *which* rule stopped *what*. The refusals are on the decision, in
+    `alternatives_rejected`: "the allocator wanted a silent retry, RBI_AFA_LIMIT
+    said no". That is the compliant-escalation claim, and it is the one thing
+    the guardrail panel was missing.
+
+    Counted per decision, not per rejected candidate: one obligation above the
+    AFA ceiling refuses both `silent_retry` and `schedule_debit`, and reporting
+    that as two blocked cases would double-count the money.
+    """
+    where = ""
+    params: list[Any] = []
+    if merchant_id:
+        where = "AND c.merchant_id = %s"
+        params.append(merchant_id)
+    rows = conn.execute(
+        f"""
+        WITH refused AS (
+            SELECT DISTINCT d.id AS decision_id,
+                   alt->>'blocked_by' AS rule_id,
+                   o.amount_paise
+              FROM agent_decision d
+              JOIN recovery_case c ON c.id = d.case_id
+              JOIN obligation o    ON o.id = c.obligation_id
+              CROSS JOIN LATERAL jsonb_array_elements(d.alternatives_rejected) AS alt
+             WHERE d.run_id IS NOT NULL
+               AND alt->>'rejected_by' = 'POLICY'
+               AND alt->>'blocked_by' IS NOT NULL
+               {where}
+        )
+        SELECT rule_id,
+               count(*)                                 AS n,
+               coalesce(sum(amount_paise), 0)::bigint   AS amount_paise
+          FROM refused
+         GROUP BY rule_id
+         ORDER BY n DESC
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def budget_state(
     conn: psycopg.Connection, merchant_id: str | None = None,
     window: date | None = None,

@@ -172,8 +172,28 @@ def decisions(
 
 @app.get("/metrics/policy")
 def policy_metrics(merchant_id: str | None = Query(None)) -> list[dict]:
-    """Blocks and escalations by named rule — "the agent wanted this; this stopped it"."""
+    """Blocks and escalations by named rule — "the agent wanted this; this stopped it".
+
+    Two sources, because a "no" is recorded in two places. `policy_evaluation`
+    holds the verdicts on the action that was finally taken — where the only
+    non-allow outcomes are escalations and the stopping rules. The regulatory
+    refusals are on the actions that were *not* taken, and live in the
+    decision's rejected alternatives; without them the panel could show a
+    merchant every rule that passed and none that bit.
+    """
+    from yukti.policy import regpack
+
     rows = _q(queries.policy_breakdown, merchant_id)
+    reg_ids = set(regpack.rule_ids())
+    for r in _q(queries.refused_alternatives, merchant_id):
+        rows.append({
+            "pack": "regulatory" if r["rule_id"] in reg_ids else "merchant",
+            "rule_id": r["rule_id"],
+            "verdict": "block",
+            "n": r["n"],
+            "amount_paise": r["amount_paise"],
+        })
+    rows.sort(key=lambda r: r["n"], reverse=True)
     for r in rows:
         r["display"] = format_inr(r["amount_paise"])
     return rows
