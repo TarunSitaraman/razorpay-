@@ -3,83 +3,107 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Yukti — recovery console</title>
-<!-- Inline so the browser never requests /favicon.ico. The 404 was harmless
-     but it printed a red error in the console on every load, which is exactly
-     the sort of thing that gets asked about mid-demo. -->
+<title>Niyama — Recovery Console</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#8377;</text></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 
 <header>
-  <h1>Yukti</h1>
-  <span class="tag">the recovery agent that knows when to stop</span>
-  <select id="merchant"></select>
+  <div class="brand">
+    <span class="logo">N</span>
+    <div>
+      <h1>Niyama</h1>
+      <span class="tag">Recovery that knows when to stop</span>
+    </div>
+  </div>
+  <div class="controls">
+    <select id="merchant" aria-label="Merchant"></select>
+    <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
+  </div>
 </header>
 
 <main>
 
-<!-- Beat 1: the problem, across all four surfaces at once. -->
-<section id="risk">
-  <h2>Revenue at risk</h2>
-  <p class="note">
-    Four kinds of revenue leak — failed payments, abandoned carts, failed
-    subscriptions, overdue invoices. Four separate tools today. One customer.
-  </p>
-  <div class="tiles" id="risk-tiles"></div>
-  <div class="bars" id="risk-bars" style="margin-top:1rem"></div>
-</section>
+  <!-- ============================================================= -->
+  <!-- HERO + SNAPSHOT — How much is at stake? -->
+  <!-- ============================================================= -->
+  <section id="hero" class="hero">
+    <div class="eyebrow">Net margin actually created</div>
+    <div class="big" id="hero-big">—</div>
+    <div class="receipt" id="hero-receipt">Loading…</div>
+    <span class="pill-note" id="hero-note" hidden>Only strategy with result excluding zero</span>
+  </section>
 
-<!-- Beat 11: the headline. Gross and net are separate charts on purpose: two
-     measures of different scale never share an axis. -->
-<section id="lift">
-  <h2>Measured money — five arms, identical cases</h2>
-  <p class="note">
-    Every arm runs the same allocator, stopping rules and policy engine. Only the
-    number being optimised changes, so any difference is the objective and never
-    the plumbing. The arm that recovers the most is not the arm that earns the most.
-  </p>
-  <div id="lift-body"><p class="empty">Run <code>make eval</code> to produce this.</p></div>
-</section>
+  <section id="snapshot">
+    <h2>At a glance</h2>
+    <div class="tiles" id="snapshot-tiles"></div>
+  </section>
 
-<!-- Beat 7: stopping rules, by name, with the money deliberately not chased. -->
-<section id="stopping">
-  <h2>Stopping rules — work deliberately not done</h2>
-  <p class="note">
-    Stopped and not-funded are reported apart. One is a decision that this money
-    is not worth chasing; the other is a budget that ran out with the case still
-    open. Adding them would overstate what the system walked away from.
-  </p>
-  <div class="tiles" id="notchased-tiles"></div>
-  <div class="bars" id="stopping-bars" style="margin-top:1rem"></div>
-</section>
+  <!-- ============================================================= -->
+  <!-- WHERE THE MONEY IS STUCK -->
+  <!-- ============================================================= -->
+  <section id="risk">
+    <h2>Where your money is stuck</h2>
+    <p class="kicker">
+      Money that failed and is still recoverable, split across the four ways a
+      payment can leak. One customer can appear in more than one.
+    </p>
+    <div class="card">
+      <div class="bars" id="risk-bars"></div>
+    </div>
+  </section>
 
-<!-- Beat 6: the budget draining. -->
-<section id="budgets">
-  <h2>Budgets</h2>
-  <p class="note">
-    Hard limits, enforced by the database rather than by arithmetic. A per-customer
-    cap applies across every surface — which is what a per-agent budget cannot see.
-  </p>
-  <div class="tiles" id="budget-tiles"></div>
-</section>
+  <!-- ============================================================= -->
+  <!-- WAS THE RECOVERY WORTH DOING? -->
+  <!-- ============================================================= -->
+  <section id="lift">
+    <h2>Was the recovery worth doing?</h2>
+    <p class="kicker">
+      Six strategies run on identical cases — same budget, same rules — only the
+      decision of <em>who to contact</em> changes. Four are charted: the two that
+      never contact anyone — an untouched holdout and retry-only — are the
+      baseline the others are measured against. The winner is measured in net
+      margin the merchant keeps, not gross cash that would have arrived anyway.
+    </p>
+    <div id="lift-body"></div>
+  </section>
 
-<!-- Beat 8: the agent wanted to; policy said no. -->
-<section id="policy">
-  <h2>Policy — what was blocked, and by which rule</h2>
-  <div id="policy-body"></div>
-</section>
+  <!-- ============================================================= -->
+  <!-- WHAT WE CHOSE NOT TO DO -->
+  <!-- ============================================================= -->
+  <section id="stopping">
+    <h2>What we chose not to do</h2>
+    <p class="kicker">
+      Every recovery tool reports what it did. Nearly none can say what it
+      deliberately skipped, and why — which is exactly where a customer is
+      protected from being chased pointlessly.
+    </p>
+    <div id="stopping-body"></div>
+  </section>
 
-<!-- Beats 5 & 6: the live decision feed with rejected alternatives. -->
-<section id="decisions">
-  <h2>Decision feed</h2>
-  <p class="note">
-    Every other recovery product can tell a merchant what it did. This one can
-    tell them what it declined to do, and which rule declined it.
-  </p>
-  <div id="decisions-body"></div>
-</section>
+  <!-- ============================================================= -->
+  <!-- GUARDRAILS IN FORCE -->
+  <!-- ============================================================= -->
+  <section id="policy">
+    <h2>Guardrails in force</h2>
+    <p class="kicker">
+      Checks that ran on every action. A block means the action was not sent; an
+      escalation means a human approves it first.
+    </p>
+    <div class="card" id="policy-body"></div>
+  </section>
+
+  <!-- ============================================================= -->
+  <!-- RECENT ACTIVITY (THE DECISION FEED) -->
+  <!-- ============================================================= -->
+  <section id="decisions">
+    <h2>Recent activity</h2>
+    <p class="kicker">
+      What the system did, and — more importantly — what it turned down and why.
+    </p>
+    <div id="decisions-body"></div>
+  </section>
 
 </main>
 
