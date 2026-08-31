@@ -112,50 +112,7 @@ sensitivity: ## Sweep the assumptions the headline rests on (no services needed)
 # in ~5 minutes after a cold clone.
 # ---------------------------------------------------------------------------
 demo-light: sensitivity ## Run the service-free sensitivity sweep
-	@$(PY) -m yukti.eval.cli sensitivity
-	@$(PY) -c "
-import json, pathlib
-from yukti.eval.sensitivity import sweep, ARM_KEYS
-from yukti.eval.estimator import Interval
-# Build a lightweight eval report from the sensitivity run.
-# We only need the persuadable_uplift axis because it is the headline axis.
-points = sweep('persuadable_uplift', (0.46, 0.06), n_train=1_200, n_plan=600, contact_budget=25)
-rich, poor = points[0], points[1]
-report = {'arm_results': {}, 'comparison': {}, 'power': {}}
-for arm in ARM_KEYS:
-    a = rich.arms[arm]
-    b = poor.arms[arm]
-    report['arm_results'][arm] = {
-        'contacts': a.contacts,
-        'recovered_cases': a.recovered_cases,
-        'incremental_paise': a.incremental_paise,
-        'contact_attributable_paise': a.contact_attributable_paise,
-        'per_1k': str(a.per_1k) if isinstance(a.per_1k, str) else f\"[{a.per_1k.low:.0f}, {a.per_1k.high:.0f}]\",
-        'winner': a.winner,
-    }
-    report['comparison'][arm] = {
-        'rich_incremental': rich.arms[arm].incremental_paise,
-        'poor_incremental': poor.arms[arm].incremental_paise,
-        'delta': rich.arms[arm].incremental_paise - poor.arms[arm].incremental_paise,
-    }
-# Power analysis disclosure (from EVALUATION.md §3)
-import math
-per_case_sd = 12_870  # from EVALUATION.md: ~12,870 rupees of noise around ~315 effect
-effect_size = 315      # per-case effect size (also from EVALUATION.md)
-treated_fraction = 0.75
-holdout_fraction = 0.10
-factor = 1 / (1 - holdout_fraction) + 1 / holdout_fraction
-cases_needed = math.ceil(factor * (2.8 * per_case_sd / effect_size) ** 2)
-report['power'] = {
-    'per_case_sd_paise': per_case_sd,
-    'effect_size_paise': effect_size,
-    'cases_needed_for_80pct_power': cases_needed,
-    'available_cases': 3_475,
-    'shortfall_vs_80pct': '39×',
-}
-pathlib.Path('artifacts/demo-results.json').write_text(json.dumps(report, indent=2))
-print('  ok   generated artifacts/demo-results.json')
-"
+	@$(PY) -m yukti.eval.demo_bundle
 	@printf "\n  \033[0;36m[yukti]\033[0m demo-light ready - open http://localhost:8080\n\n"
 
 # A planning moment INSIDE the synthetic world, which spans 2026-05-01 to
