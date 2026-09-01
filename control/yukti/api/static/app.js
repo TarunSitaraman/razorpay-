@@ -143,6 +143,60 @@ function bars(container, rows, { format = inr } = {}) {
   }
 }
 
+/* A comparison chart with a real zero axis.
+ *
+ * `bars` draws magnitudes, which is right for "how much is stuck in carts" and
+ * wrong for a column that contains both losses and gains: drawing |value|
+ * against a left edge gave a −₹44,988 loss the same footprint as a gain of the
+ * same size, and the losing arms are the most important thing on this page.
+ * Here zero is a fixed vertical rule and a bar grows left or right from it.
+ */
+function divergingBars(container, rows, { axisFormat = inr } = {}) {
+  container.innerHTML = "";
+  if (!rows.length) {
+    container.append(el("p", "empty", "Nothing here yet."));
+    return;
+  }
+  const lo = Math.min(0, ...rows.map((r) => r.value));
+  const hi = Math.max(0, ...rows.map((r) => r.value));
+  const span = (hi - lo) || 1;
+  const zeroPct = ((0 - lo) / span) * 100;
+
+  for (const r of rows) {
+    const row = el("div", "bar-row");
+    row.append(el("div", "name", r.name));
+
+    const track = el("div", "bar-track");
+    const fill = el("div", "bar-fill " + (r.fill || ""));
+    const valuePct = ((r.value - lo) / span) * 100;
+    const left = Math.min(zeroPct, valuePct);
+    fill.style.left = `${left}%`;
+    fill.style.width = `${Math.max(0.4, Math.abs(valuePct - zeroPct))}%`;
+    const rule = el("div", "zero-rule");
+    rule.style.left = `${zeroPct}%`;
+    track.append(fill, rule);
+
+    row.append(track);
+    row.append(el("div", "val", r.display ?? axisFormat(r.value)));
+    if (r.title) row.title = r.title;
+    container.append(row);
+  }
+
+  // Axis: the zero tick is the one that matters, so it is labelled explicitly
+  // rather than left for the reader to infer from the bars.
+  const axis = el("div", "axis");
+  axis.append(el("div", ""));
+  const ticks = el("div", "ticks");
+  for (const [pct, label] of [[0, axisFormat(lo)], [zeroPct, "0"], [100, axisFormat(hi)]]) {
+    const t = el("div", "tick", label);
+    t.style.left = `${pct}%`;
+    ticks.append(t);
+  }
+  axis.append(ticks);
+  axis.append(el("div", "spacer"));
+  container.append(axis);
+}
+
 let merchantId = null;
 let merchantNames = {};
 const q = (extra = {}) => {
@@ -222,6 +276,7 @@ function renderHero() {
           ? ` · the panels below are ${merchantNames[merchantId] || "the selected merchant"}`
           : ""));
   $("hero-receipt").after(scope);
+  renderStamp();
 
   if (yWinsAlone) {
     const note = $("hero-note");
@@ -298,22 +353,28 @@ function renderLiftComparison() {
       + `${merchantNames[merchantId] || "the merchant you selected"}.`));
   }
   box.append(el("div", "legend",
-    `<span><span class="swatch" style="background:var(--good)"></span> Niyama</span>` +
-    `<span><span class="swatch" style="background:var(--neutral)"></span> Other strategies</span>`
+    `<span><span class="swatch" style="background:var(--good)"></span> Earned money</span>` +
+    `<span><span class="swatch" style="background:var(--bad)"></span> Lost money</span>` +
+    `<span>Bars grow from zero — left is a loss.</span>`
   ));
 
-  const cont = el("div", "bars");
+  const cont = el("div", "bars diverge");
   box.append(cont);
-  bars(cont, arms.map((a) => ({
+  // Worst first, winner last: the eye lands on the arm that crossed zero.
+  const ordered = [...arms].sort(
+    (a, b) => a.contact_incremental_paise - b.contact_incremental_paise);
+  divergingBars(cont, ordered.map((a) => ({
     name: `<b>${ARM_NAME[a.key] || a.label}</b>`,
     value: a.contact_incremental_paise,
-    fill: a.key === "Y" ? (a.contact_incremental_paise > 0 ? "good" : "bad") : "muted",
+    fill: a.key === "Y"
+      ? (a.contact_incremental_paise > 0 ? "good" : "bad")
+      : (a.contact_incremental_paise > 0 ? "muted" : "bad"),
     display: `${inr(a.contact_incremental_paise, { signed: true })}`
       + (a.contact_per_1k ? `  ·  <span class="dim">${inr(a.contact_per_1k.point, { signed: true })}/1k</span>` : ""),
     title: a.contact_per_1k
       ? `${ARM_NAME[a.key] || a.label} — 95% CI per 1,000: ${inr(a.contact_per_1k.low, { signed: true })} to ${inr(a.contact_per_1k.high, { signed: true })}`
       : undefined,
-  })), { format: (v) => inr(v, { signed: true }) });
+  })), { axisFormat: (v) => inr(v, { signed: true }) });
 
   const y = arms.find((a) => a.key === "Y");
   const bestRival = arms.filter((a) => a.key !== "Y")
@@ -364,10 +425,9 @@ async function loadStopping() {
   ));
   box.append(tiles);
 
-  const card = el("div", "card");
-  card.style.marginTop = "0.9rem";
+  const card = el("div", "panel");
   const legend = el("div", "legend",
-    `<span><span class="swatch" style="background:var(--accent)"></span> by reason</span>`);
+    `<span><span class="swatch" style="background:var(--cool)"></span> money not chased, by reason</span>`);
   card.append(legend);
   const b = el("div", "bars");
   card.append(b);
@@ -382,9 +442,11 @@ async function loadStopping() {
 
 /* ---- 4. Guardrails ---- */
 async function loadPolicy() {
-  const box = $("policy-body");
+  const outer = $("policy-body");
   const rows = await json(`/metrics/policy${q()}`);
-  box.innerHTML = "";
+  outer.innerHTML = "";
+  const box = el("div", "panel");
+  outer.append(box);
   if (!rows.length) {
     box.append(el("p", "empty", "No blocks or escalations recorded."));
     return;
@@ -406,7 +468,7 @@ async function loadPolicy() {
     for (const r of groups[pack]) {
       const tr = el("tr");
       tr.innerHTML = `
-        <td>${name(RULE_NAME, r.rule_id)}</td>
+        <td>${name(RULE_NAME, r.rule_id)}<span class="rule-id">${r.rule_id}</span></td>
         <td>${pill(r.verdict)}</td>
         <td class="num">${num(r.n)}</td>
         <td class="num">${inr(r.amount_paise)}</td>`;
@@ -489,12 +551,12 @@ function renderDecisions() {
       `${num(acted.length)} action${acted.length === 1 ? "" : "s"} taken, ` +
       `${num(held.length)} held back — actions shown first.`));
   }
-  const card = el("div", "card");
+  const card = el("div", "panel");
   const table = el("table");
   table.innerHTML = `<thead><tr>
     <th>Action</th><th>Outcome</th>
     <th style="text-align:right">Expected margin</th>
-    <th style="text-align:right">Value</th><th>Why</th>
+    <th style="text-align:right">Amount owed</th><th>Why</th>
   </tr></thead>`;
   const tb = el("tbody");
   for (const d of rows) {
@@ -554,7 +616,7 @@ const DB_PANELS = [
 ];
 
 async function refresh() {
-  await Promise.allSettled([
+  const done = Promise.allSettled([
     loadLift(),
     ...DB_PANELS.map(([load, target]) => load().catch(() => {
       const box = $(target);
@@ -565,10 +627,81 @@ async function refresh() {
         + "make up && make services, or run make demo for the full walkthrough."));
     })),
   ]);
+  await done;
+  syncNav();
+}
+
+/* Rail wayfinding. Six sections is enough that a viewer scrolling during a
+ * walkthrough loses track of which question they are on; the rail answers it
+ * without them having to scroll back to a heading.
+ */
+let syncNav = () => {};
+
+function initNav() {
+  const links = [...document.querySelectorAll(".rail-nav a")];
+  const sections = links
+    .map((a) => document.getElementById(a.dataset.target))
+    .filter(Boolean);
+  const mark = (id) => links.forEach(
+    (a) => a.classList.toggle("on", a.dataset.target === id));
+
+  // The current section is the last one whose heading has passed the reading
+  // line — a quarter of the way down the viewport. An IntersectionObserver
+  // band was tried first and lagged: a tall section still intersecting keeps
+  // winning while the reader is already well into the next one.
+  const READING_LINE = 0.25;
+  let queued = false;
+  const update = () => {
+    queued = false;
+    // The section the reading line is *inside*, not merely past: the readout is
+    // short enough that the next section's top clears the line while the hero
+    // is still the whole of what a viewer is looking at.
+    const line = window.innerHeight * READING_LINE;
+    let current = sections[0];
+    for (const s of sections) {
+      const r = s.getBoundingClientRect();
+      if (r.top <= line && r.bottom > line) { current = s; break; }
+      if (r.top <= line) current = s;
+    }
+    // At the top the readout is shorter than the reading line, so the section
+    // after it legitimately contains the line while the reader is looking at
+    // the result. Scroll position settles it.
+    if (window.scrollY < 40) current = sections[0];
+    // At the very bottom the last section may never cross the line.
+    if (window.scrollY + window.innerHeight >= document.body.scrollHeight - 4) {
+      current = sections[sections.length - 1];
+    }
+    if (current) mark(current.id);
+  };
+  const onScroll = () => {
+    // rAF is paused in a background tab, which would leave the rail pointing at
+    // whatever was current when the tab was hidden.
+    if (document.hidden) { update(); return; }
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(update);
+  };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+  // Panels render after the first paint, so section heights — and therefore
+  // which one holds the reading line — are wrong until the data lands.
+  syncNav = onScroll;
+  update();
+}
+
+// Whose book, as of when — pinned in the rail so it is on screen in every
+// frame of a recording, not only when the hero is scrolled into view.
+function renderStamp() {
+  const stamp = $("rail-stamp");
+  if (!stamp || !liftCache) return;
+  if (liftCache.source === "demo-light") { stamp.textContent = "demo-light"; return; }
+  const asOf = (liftCache.as_of || "").slice(0, 10);
+  stamp.textContent = asOf ? `as of ${asOf}` : "";
 }
 
 async function init() {
   initTheme();
+  initNav();
   const merchants = await json("/merchants");
   const sel = $("merchant");
   sel.append(new Option("All merchants", ""));
