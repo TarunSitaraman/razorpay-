@@ -2,8 +2,23 @@
 
 from __future__ import annotations
 
+import sys
+
 import typer
 from rich.console import Console
+
+# Windows consoles default to cp1252, which cannot encode the rupee sign or the
+# box-drawing characters rich reaches for. Every command in this module prints
+# money, and each does its computation FIRST — so the failure lands after all
+# the work, as a UnicodeEncodeError in the renderer, with nothing written.
+#
+# `sensitivity` already guarded itself after losing a full sweep to exactly
+# this. `run` did not, and `run` is what `make eval` invokes: it spent 931s
+# computing all six arms and then died printing the headline number, which made
+# `make demo` fail on its very last step. Done once here so a new command cannot
+# forget it.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 app = typer.Typer(add_completion=False, help="Yukti evaluation harness")
 console = Console()
@@ -199,18 +214,8 @@ def sensitivity(
     "you built a world where you win", so it has to be reproducible by someone
     who has just cloned the repository and cannot run the stack.
     """
-    import sys
-
     from yukti.eval import sensitivity as sens
     from yukti.eval.sensitivity_report import GRIDS, render, save_grid
-
-    # Windows consoles default to cp1252 and cannot encode the characters rich
-    # reaches for. A full sweep refits a model at ~28 grid points; the first run
-    # of this command computed all of it and then died in the renderer on a
-    # single minus sign. Reconfiguring costs nothing and the alternative is
-    # losing an hour of compute to a codepage.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     axes = list(GRIDS) if axis == "all" else [axis]
     unknown = [a for a in axes if a not in sens.AXES]

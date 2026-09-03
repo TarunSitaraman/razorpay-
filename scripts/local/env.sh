@@ -11,6 +11,19 @@ set -euo pipefail
 YUKTI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export YUKTI_ROOT
 
+# The virtualenv's interpreter. A venv created on Windows puts it in
+# Scripts/python.exe rather than bin/python, and hardcoding the POSIX path meant
+# `make services` silently started nothing on a Windows checkout — which is how
+# a planning cycle came to run with no sandbox to dispatch into.
+if [[ -x "${YUKTI_ROOT}/.venv/bin/python" ]]; then
+  YUKTI_PY="${YUKTI_ROOT}/.venv/bin/python"
+elif [[ -x "${YUKTI_ROOT}/.venv/Scripts/python.exe" ]]; then
+  YUKTI_PY="${YUKTI_ROOT}/.venv/Scripts/python.exe"
+else
+  YUKTI_PY="python3"
+fi
+export YUKTI_PY
+
 export YUKTI_INFRA="${YUKTI_ROOT}/.infra"
 export KAFKA_HOME="${YUKTI_INFRA}/kafka"
 export KAFKA_DATA="${YUKTI_INFRA}/kafka-data"

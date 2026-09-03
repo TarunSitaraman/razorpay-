@@ -46,8 +46,16 @@ _client: httpx.AsyncClient | None = None
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _client
+    # A short CONNECT timeout, separate from the read timeout. `emit` already
+    # treats a dead sink as non-fatal -- "the sink being down must not fail the
+    # merchant's API call" -- but a single 10s budget only made the failure
+    # non-fatal, not fast: with no gateway listening, Windows leaves the SYN
+    # unanswered and every webhook blocked ~2s before giving up. That is paid
+    # once per sandbox POST and twice per contact action, which turned a
+    # planning cycle from seconds into hours. Read and write keep the full 10s;
+    # only the "is anything there at all" question is answered quickly.
     _client = httpx.AsyncClient(
-        timeout=10.0,
+        timeout=httpx.Timeout(10.0, connect=0.25),
         limits=httpx.Limits(max_connections=64, max_keepalive_connections=64),
     )
     try:
