@@ -6,6 +6,9 @@ import typer
 
 from yukti.store import db
 
+from dotenv import load_dotenv
+load_dotenv()
+
 app = typer.Typer(add_completion=False, help="Yukti control plane")
 
 
