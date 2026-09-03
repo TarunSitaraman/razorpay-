@@ -48,45 +48,41 @@
 
 <aside class="rail">
   <nav class="rail-nav" aria-label="Sections">
-    <p class="rail-group">Monitor</p>
-    <a href="#hero"      data-target="hero"><i>01</i> Result</a>
-    <a href="#risk"      data-target="risk"><i>02</i> Money at risk</a>
-    <a href="#lift"      data-target="lift"><i>03</i> Was it worth it</a>
-    <a href="#stopping"  data-target="stopping"><i>04</i> Not chased</a>
-
-    <p class="rail-group">Operate</p>
-    <a href="#/approvals" data-target="approvals" class="has-badge"><i>05</i> Approvals
+    <a href="#/"          data-target="hero">Today</a>
+    <a href="#/approvals" data-target="approvals" class="has-badge">Approvals
       <span class="badge" id="approvals-badge" hidden>0</span></a>
-    <a href="#/cases"    data-target="cases"><i>06</i> Cases</a>
-    <a href="#/cycles"   data-target="cycles"><i>07</i> Planning runs</a>
-
-    <p class="rail-group">Evidence</p>
-    <a href="#policy"    data-target="policy"><i>08</i> Guardrails</a>
-    <a href="#decisions" data-target="decisions"><i>09</i> Activity</a>
-    <a href="#/evidence" data-target="evidence"><i>10</i> Audit chain</a>
+    <a href="#/cases"     data-target="cases">Cases</a>
+    <a href="#/evidence"  data-target="evidence">Evidence</a>
   </nav>
 </aside>
 
 <main>
 
   <!-- 01 — the one sentence the whole product exists to justify. -->
+  <!-- Today. Four statements and the one thing that needs a person, above the
+       fold, before any chart. The analysis is still here — it is underneath,
+       where someone who wants it will look, rather than in front of someone
+       who arrived with a job to do. -->
   <section id="hero">
-    <div class="readout">
-      <div class="readout-key">
-        <div class="eyebrow">Net margin actually created</div>
-        <div class="big" id="hero-big">—</div>
-      </div>
-      <div class="readout-body">
-        <p class="receipt" id="hero-receipt">Loading…</p>
-        <span class="pill-note" id="hero-note" hidden>Only strategy with a result excluding zero</span>
-      </div>
+    <div class="today-head">
+      <h2>Today</h2>
+      <span class="today-scope" id="today-scope">&mdash;</span>
     </div>
+    <div id="today-body"><p class="empty">Loading&hellip;</p></div>
+
+    <nav class="analysis-jump" aria-label="Analysis">
+      <span>Analysis</span>
+      <a href="#risk">Money at risk</a>
+      <a href="#lift">Was it worth it</a>
+      <a href="#stopping">Not chased</a>
+      <a href="#policy">Guardrails</a>
+      <a href="#decisions">Activity</a>
+    </nav>
   </section>
 
   <!-- 02 — where the money is stuck. -->
   <section id="risk">
     <div class="sec-head">
-      <i class="idx">02</i>
       <h2>Where your money is stuck</h2>
     </div>
     <p class="kicker">
@@ -102,7 +98,6 @@
   <!-- 03 — the measured result. -->
   <section id="lift">
     <div class="sec-head">
-      <i class="idx">03</i>
       <h2>Was the recovery worth doing?</h2>
     </div>
     <p class="kicker">
@@ -118,7 +113,6 @@
   <!-- 04 — the differentiator: what we chose not to do. -->
   <section id="stopping">
     <div class="sec-head">
-      <i class="idx">04</i>
       <h2>What we chose not to do</h2>
     </div>
     <p class="kicker">
@@ -132,7 +126,6 @@
   <!-- 05 — the rules that were enforced. -->
   <section id="policy">
     <div class="sec-head">
-      <i class="idx">08</i>
       <h2>Guardrails in force</h2>
     </div>
     <p class="kicker">
@@ -145,7 +138,6 @@
   <!-- 06 — the decision feed. -->
   <section id="decisions">
     <div class="sec-head">
-      <i class="idx">09</i>
       <h2>Recent activity</h2>
     </div>
     <p class="kicker">
@@ -156,15 +148,15 @@
 
   <!-- 05 — the queue -->
   <section id="approvals" style="display:none">
-    <div class="sec-head"><i class="idx">05</i><h2>Waiting on you</h2></div>
-    <p class="kicker">Actions the system decided were right but is not permitted to send on its own authority. Approving re-runs the full policy engine — a rule that now forbids the action will still refuse it.</p>
+    <div class="sec-head"><h2>Waiting on you</h2></div>
+    <div class="kicker">Actions we judged right but are not allowed to send on our own authority. <details class="why"><summary>why</summary><span>Approving re-runs the full policy engine rather than bypassing it. A rule that forbids the action now — a consent withdrawn, a contact cap reached — still refuses it, and the refusal is recorded.</span></details></div>
     <div id="approvals-body"></div>
   </section>
 
   <!-- 07 — case list -->
   <section id="cases" style="display:none">
-    <div class="sec-head"><i class="idx">06</i><h2>Cases</h2></div>
-    <p class="kicker">Browse cases by state, arm, stop reason, or preset. Click a case to open its file.</p>
+    <div class="sec-head"><h2>Cases</h2></div>
+    <p class="kicker">Filter by state, arm or stop reason. Open any case to see its full file.</p>
     <div id="cases-body"></div>
   </section>
 
@@ -177,15 +169,15 @@
 
   <!-- 08 — planning runs -->
   <section id="cycles" style="display:none">
-    <div class="sec-head"><i class="idx">07</i><h2>Planning runs</h2></div>
-    <p class="kicker">Every completed run, read back out of the audit chain: candidates → stopped by named rule → policy-filtered → allocated → dispatched. Runs that recorded the allocator's shadow prices report them in rupees.</p>
+    <div class="sec-head"><h2>Planning runs</h2></div>
+    <div class="kicker">Every completed planning run, read back out of the audit chain. <details class="why"><summary>why</summary><span>Candidates → stopped by a named rule → policy-filtered → allocated → dispatched. A run is not a table: <code>plan_cycle</code> writes its result as an audit event, and that is deliberately the only record. λ contact is what one more contact would have to be worth before the allocator would fund it.</span></details></div>
     <div id="cycles-body"></div>
   </section>
 
   <!-- 09 — evidence -->
   <section id="evidence" style="display:none">
-    <div class="sec-head"><i class="idx">10</i><h2>Evidence</h2></div>
-    <p class="kicker">Every decision the system took was written to a hash chain. This re-walks it on request and shows the tip, so the claim can be checked rather than taken on trust.</p>
+    <div class="sec-head"><h2>Evidence</h2></div>
+    <div class="kicker">Every decision was written to a hash chain. This re-walks it now. <details class="why"><summary>why</summary><span>Recomputed on request rather than cached: a cached "intact" is an assertion about a past state of the table, which is the one claim this panel exists to refuse to make. The tip is shown so the links are visible rather than asserted.</span></details></div>
     <div id="evidence-body"></div>
   </section>
 
@@ -193,6 +185,7 @@
 
 <script src="/static/app.js"></script>
 <script src="/static/views/overview.js"></script>
+<script src="/static/views/today.js"></script>
 <script src="/static/views/cases.js"></script>
 <script src="/static/views/approvals.js"></script>
 <script src="/static/views/cycles.js"></script>

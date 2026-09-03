@@ -463,6 +463,95 @@ td a code { color: var(--accent); background: none; padding: 0; }
 td a { text-decoration: none; }
 td a:hover code { text-decoration: underline; }
 
+/* The reasoning behind a panel, one click away rather than in front of the
+   reader. The console's arguments are worth making — they are just not what
+   someone arriving with a job needs first. */
+.why { display: inline; }
+.why > summary {
+  display: inline; cursor: pointer; list-style: none;
+  font-size: 0.76rem; color: var(--ink-mut);
+  border-bottom: 1px dotted var(--hair-strong);
+}
+.why > summary::-webkit-details-marker { display: none; }
+.why > summary:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.why[open] > summary { color: var(--ink-2); }
+.why[open]::after {
+  content: ""; display: block; height: 0.4rem;
+}
+.why > :not(summary) {
+  display: block; margin-top: 0.5rem; font-size: 0.82rem;
+  color: var(--ink-mut); max-width: var(--measure);
+}
+.why code {
+  font-family: var(--mono); font-size: 0.76rem;
+  background: var(--inset); border-radius: 4px; padding: 0.03rem 0.28rem;
+}
+
+/* =====================================================================
+   Today — the landing surface
+   =====================================================================
+   Four statements, each a sentence on the left and a number on the right.
+   Deliberately not tiles: tiles imply a dashboard of equals, and these are not
+   equals — one of them is a job, and it should not look like a metric. */
+.today-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin-bottom: 0.2rem;
+}
+.today-head h2 {
+  margin: 0; font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em;
+}
+.today-scope {
+  font-family: var(--mono); font-size: 0.76rem; color: var(--ink-mut);
+}
+
+.today-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1.5rem; padding: 1.05rem 0; border-bottom: 1px solid var(--hair);
+}
+.today-row:last-child { border-bottom: 0; }
+.today-label { font-size: 1.06rem; font-weight: 600; letter-spacing: -0.01em; }
+.today-sub {
+  font-size: 0.82rem; color: var(--ink-mut); margin-top: 0.18rem;
+  max-width: var(--measure);
+}
+.today-right { display: flex; align-items: baseline; gap: 0.9rem; flex: none; }
+.today-value {
+  font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.today-value.good { color: var(--good); }
+.today-value.warn { color: var(--warn); }
+
+/* The queue is the one row that is a task, so it is the one row that gets a
+   control. Everything else on this screen is read-only by design. */
+.today-row.actionable { border-left: 3px solid var(--warn); padding-left: 0.9rem; margin-left: -0.9rem; }
+.today-cta {
+  font-size: 0.82rem; font-weight: 600; text-decoration: none;
+  color: var(--paper); background: var(--ink); border: 1px solid var(--ink);
+  border-radius: 7px; padding: 0.34rem 0.85rem; white-space: nowrap;
+}
+.today-cta:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.today-cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The analysis is still one page down, not one click away — but it needs a
+   way in now that it is out of the rail. */
+.analysis-jump {
+  display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--hair);
+}
+.analysis-jump > span {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.11em;
+  color: var(--ink-mut);
+}
+.analysis-jump a {
+  font-size: 0.84rem; color: var(--ink-2); text-decoration: none;
+  border-bottom: 1px solid var(--hair-strong); padding-bottom: 1px;
+}
+.analysis-jump a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* The rail lost its numbers with the regrouping; the links carry the weight. */
+.rail-nav a { font-size: 0.95rem; padding: 0.42rem 0.55rem; }
+
 /* =====================================================================
    Approvals — the one view that acts
    ===================================================================== */

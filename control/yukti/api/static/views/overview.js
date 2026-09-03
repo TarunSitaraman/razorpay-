@@ -14,6 +14,12 @@ async function loadLift() {
 }
 
 function renderHero() {
+  // The hero readout was replaced by the Today rows, which render the same
+  // receipt from the same liftCache. Kept as a guarded no-op rather than
+  // deleted because loadLift still calls it, and it still owns the stamp:
+  // without this the missing #hero-big threw, loadLift never reached
+  // renderStamp, and the top bar read "as of —" on every load.
+  if (!$("hero-big")) { renderStamp(); return; }
   document.querySelector(".hero-scope")?.remove();
   const y = liftCache?.arms?.find((a) => a.key === "Y");
   if (!y) { $("hero-big").textContent = "No evaluation yet"; $("hero-receipt").textContent = "Run the evaluation to measure the net margin this system actually created."; return; }

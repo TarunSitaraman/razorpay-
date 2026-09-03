@@ -305,6 +305,12 @@ function initNav() {
       if (r.top <= line && r.bottom > line) { current = s; break; }
       if (r.top <= line) current = s;
     }
+    // Only `hero` is in the rail now. The analysis sections below it are
+    // reached by the inline jump list, and while reading them the reader is
+    // still on Today — so the rail says so rather than going blank.
+    if (current && !links.some((a) => a.dataset.target === current.id)) {
+      current = sections[0];
+    }
     if (window.scrollY < 40) current = sections[0];
     if (window.scrollY + window.innerHeight >= document.body.scrollHeight - 4) current = sections[sections.length - 1];
     if (current) mark(current.id);
@@ -383,13 +389,14 @@ function showView(name) {
   // reader can see where they descended from. On the overview the scrollspy is
   // the authority, so hand the mark straight back to it.
   if (name === "overview") syncNav();
-  else markNav(name === "case" ? "cases" : name);
+  else markNav(name === "case" ? "cases" : name === "cycles" ? "evidence" : name);
 }
 
 /* ---- Overview object ---- */
 const Overview = {
   mount() {
     const done = Promise.allSettled([
+      loadToday().catch(() => { const b = $("today-body"); if (b) { b.innerHTML = ""; b.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo.")); } }),
       loadSnapshot().catch(() => { const b = $("snapshot-tiles"); if (b) { b.innerHTML = ""; b.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo.")); } }),
       loadRisk().catch(() => { const b = $("risk-bars"); if (b) { b.innerHTML = ""; b.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo.")); } }),
       loadStopping().catch(() => { const b = $("stopping-body"); if (b) { b.innerHTML = ""; b.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo.")); } }),
@@ -597,7 +604,8 @@ const DB_PANELS = [
 ];
 
 async function refresh() {
-  const done = Promise.allSettled([loadLift(), ...DB_PANELS.map(([load, target]) => load().catch(() => { const box = $(target); if (!box) return; box.innerHTML = ""; box.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo for the full walkthrough.")); })), ]);
+  await loadLift().catch(() => {});
+  const done = Promise.allSettled([loadToday(), ...DB_PANELS.map(([load, target]) => load().catch(() => { const box = $(target); if (!box) return; box.innerHTML = ""; box.append(el("p", "empty", "This panel reads the live database. Start the stack with make up && make services, or run make demo for the full walkthrough.")); })), ]);
   await done;
   syncNav();
 }
