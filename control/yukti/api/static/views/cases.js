@@ -92,13 +92,13 @@ function renderCaseList(box, cases) {
   table.innerHTML = `<thead><tr><th>Case</th><th>State</th><th>Arm</th><th class="num">Amount</th><th>Why it failed</th><th>Rail</th><th>Stop reason</th></tr></thead>`;
   const tb = el("tbody");
   for (const c of cases.slice(0, 100)) {
-    tb.append(el("tr", null, `<td><a href="#/case/${c.id}"><code>${c.id}</code></a></td>` +
-      `<td>${name(STATE_NAME, c.state)}</td>` +
+    tb.append(el("tr", null, `<td><a href="#/case/${encodeURIComponent(c.id)}"><code>${esc(c.id)}</code></a></td>` +
+      `<td>${esc(name(STATE_NAME, c.state))}</td>` +
       `<td>${c.arm === "holdout" ? "Held out" : c.arm ? "Worked" : "—"}</td>` +
       `<td class="num">${inr(c.amount_paise)}</td>` +
-      `<td>${c.decline_label || (c.decline_code || "—")}</td>` +
-      `<td>${[c.rail, c.issuer].filter(Boolean).join(" · ") || "—"}</td>` +
-      `<td>${c.stop_reason ? name(STOP_NAME, c.stop_reason) : "—"}</td>`));
+      `<td>${esc(c.decline_label || c.decline_code || "—")}</td>` +
+      `<td>${[c.rail, c.issuer].filter(Boolean).map(esc).join(" · ") || "—"}</td>` +
+      `<td>${c.stop_reason ? esc(name(STOP_NAME, c.stop_reason)) : "—"}</td>`));
   }
   table.append(tb); box.append(table);
   const shown = Math.min(cases.length, 100);
@@ -122,7 +122,7 @@ function renderCaseFile(box, data) {
   const { case: c, attempts, decisions, actions, outcomes, audit, ground_truth, collisions } = data;
 
   const header = el("div", "panel dossier-header");
-  header.innerHTML = `<div class="dossier-title"><strong>${c.id}</strong> · ${name(STATE_NAME, c.state)} · ${c.arm === "holdout" ? "Held out" : "Worked"} · ${merchantNames[c.merchant_id] || c.merchant_id || ""}</div><div class="dossier-sub">${name(SURFACE_NAME, c.obligation_kind)} · ${inr(c.amount_paise)} · ${c.stop_reason ? "stopped: " + name(STOP_NAME, c.stop_reason) : "never stopped"}</div>`;
+  header.innerHTML = `<div class="dossier-title"><strong>${esc(c.id)}</strong> · ${esc(name(STATE_NAME, c.state))} · ${c.arm === "holdout" ? "Held out" : "Worked"} · ${esc(merchantNames[c.merchant_id] || c.merchant_id || "")}</div><div class="dossier-sub">${esc(name(SURFACE_NAME, c.obligation_kind))} · ${inr(c.amount_paise)} · ${c.stop_reason ? "stopped: " + esc(name(STOP_NAME, c.stop_reason)) : "never stopped"}</div>`;
   box.append(header);
 
   const moneyPanel = el("div", "panel");
@@ -132,7 +132,7 @@ function renderCaseFile(box, data) {
     const table = el("table");
     table.innerHTML = `<thead><tr><th>Rail</th><th>Issuer</th><th>PSP</th><th>Why it failed</th><th>Kind</th><th>Amount</th><th>Ours</th></tr></thead>`;
     const tb = el("tbody");
-    for (const a of attempts) tb.append(el("tr", null, `<td>${a.rail || "—"}</td><td>${a.issuer || "—"}</td><td>${a.psp || "—"}</td><td>${(a.decline && a.decline.label) || a.decline_code || "—"}</td><td class="sub">${a.decline ? String(a.decline.transience).replace(/_/g, " ") : ""}</td><td class="num">${inr(a.amount_paise)}</td><td>${a.ours ? "✓" : "—"}</td>`));
+    for (const a of attempts) tb.append(el("tr", null, `<td>${esc(a.rail || "—")}</td><td>${esc(a.issuer || "—")}</td><td>${esc(a.psp || "—")}</td><td>${esc((a.decline && a.decline.label) || a.decline_code || "—")}</td><td class="sub">${a.decline ? esc(String(a.decline.transience).replace(/_/g, " ")) : ""}</td><td class="num">${inr(a.amount_paise)}</td><td>${a.ours ? "✓" : "—"}</td>`));
     table.append(tb); moneyPanel.append(table);
   }
   box.append(moneyPanel);
@@ -149,7 +149,7 @@ function renderCaseFile(box, data) {
     const table = el("table");
     table.innerHTML = `<thead><tr><th>Obligation</th><th>Kind</th><th>Amount</th><th>Case state</th></tr></thead>`;
     const tb = el("tbody");
-    for (const o of collisions.slice(0, 10)) tb.append(el("tr", null, `<td>${o.id}</td><td>${name(SURFACE_NAME, o.kind) || o.kind}</td><td class="num">${inr(o.amount_paise)}</td><td>${o.case_state ? name(STATE_NAME, o.case_state) : "—"}</td>`));
+    for (const o of collisions.slice(0, 10)) tb.append(el("tr", null, `<td>${esc(o.id)}</td><td>${esc(name(SURFACE_NAME, o.kind) || o.kind)}</td><td class="num">${inr(o.amount_paise)}</td><td>${o.case_state ? esc(name(STATE_NAME, o.case_state)) : "—"}</td>`));
     table.append(tb); colPanel.append(table); box.append(colPanel);
   }
 
@@ -200,7 +200,7 @@ function renderCaseFile(box, data) {
   if (audit.length) {
     const audPanel = el("div", "panel");
     audPanel.append(el("h3", null, "Audit <span class=\"caption\">audit_event</span>"));
-    for (const a of audit.slice(0, 20)) { const prev = (a.prev_hash || "").slice(0, 12); const h = (a.hash || "").slice(0, 12); audPanel.append(el("div", "sub", `#${a.id} ${a.action} · ${prev}→${h} · ${a.actor} · ${a.created_at?.slice(0, 10) || ""}`)); }
+    for (const a of audit.slice(0, 20)) { const prev = (a.prev_hash || "").slice(0, 12); const h = (a.hash || "").slice(0, 12); audPanel.append(el("div", "sub", `#${esc(a.id)} ${esc(a.action)} · ${esc(prev)}→${esc(h)} · ${esc(a.actor)} · ${esc(a.created_at?.slice(0, 10) || "")}`)); }
     if (audit.length > 20) audPanel.append(el("div", "caption", `${audit.length} audit rows — see #/evidence`));
     box.append(audPanel);
   }

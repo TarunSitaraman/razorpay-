@@ -1,5 +1,5 @@
 /* Cycles view — depends on globals from app.js: $, json, inr, num, el,
- * merchantNames, showView, q.
+ * merchantNames, esc, showView, q.
  *
  * A planning run is not a table. `plan_cycle` writes its result into the audit
  * chain and that is the only record, so this reads the chain back. The columns
@@ -46,9 +46,9 @@ function renderCycles(box, runs) {
     if (r.lambda_contact === null || r.lambda_contact === undefined) missingDuals++;
     const merchant = merchantNames[r.merchant_id] || (r.merchant_id || "—").slice(-8);
     tb.append(el("tr", null,
-      `<td><code>${r.id || "—"}</code></td>` +
-      `<td>${merchant}</td>` +
-      `<td>${(r.as_of || "").slice(0, 10) || "—"}</td>` +
+      `<td><code>${esc(r.id || "—")}</code></td>` +
+      `<td>${esc(merchant)}</td>` +
+      `<td>${esc((r.as_of || "").slice(0, 10) || "—")}</td>` +
       `<td class="num">${cell(r.considered)}</td>` +
       `<td class="num">${cell(r.stopped)}</td>` +
       `<td class="num">${cell(r.suppressed)}</td>` +

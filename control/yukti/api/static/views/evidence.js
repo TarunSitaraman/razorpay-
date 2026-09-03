@@ -1,5 +1,5 @@
 /* Evidence view — depends on globals from app.js: $, json, el, num, q,
- * merchantNames, showView.
+ * merchantNames, esc, showView.
  *
  * The claim this view has to support is narrow and it should not overreach:
  * every decision the system took was written into a hash chain, and that chain
@@ -28,7 +28,7 @@ function renderEvidence(box, verify, chain) {
   const v = el("div", "panel");
   v.append(el("h3", null, 'Audit chain <span class="caption">audit.verify_all()</span>'));
   if (!verify || verify.error) {
-    v.append(el("p", "empty", `Could not verify the chain: ${verify ? verify.error : "no response"}`));
+    v.append(el("p", "empty", `Could not verify the chain: ${esc(verify ? verify.error : "no response")}`));
   } else {
     const intact = verify.intact === true;
     const head = el("p", "verdict " + (intact ? "ok" : "bad"));
@@ -44,9 +44,9 @@ function renderEvidence(box, verify, chain) {
     for (const c of verify.chains || []) {
       const label = merchantNames[c.merchant_id] || c.merchant_id;
       tb.append(el("tr", null,
-        `<td>${label}</td><td class="num">${num(c.rows)}</td>` +
+        `<td>${esc(label)}</td><td class="num">${num(c.rows)}</td>` +
         `<td>${c.intact ? '<span class="pill allow">✓ intact</span>' : '<span class="pill block">✕ broken</span>'}</td>` +
-        `<td class="sub">${c.intact ? "—" : `row ${c.broken_at}: ${c.reason}`}</td>`));
+        `<td class="sub">${c.intact ? "—" : `row ${esc(String(c.broken_at))}: ${esc(c.reason)}`}</td>`));
     }
     t.append(tb);
     v.append(t);
@@ -57,7 +57,7 @@ function renderEvidence(box, verify, chain) {
   const c = el("div", "panel");
   c.append(el("h3", null, 'Chain tip <span class="caption">audit_event</span>'));
   if (!chain || chain.error || !chain.length) {
-    c.append(el("p", "empty", chain && chain.error ? `Could not read the chain: ${chain.error}` : "No audit events yet."));
+    c.append(el("p", "empty", chain && chain.error ? `Could not read the chain: ${esc(chain.error)}` : "No audit events yet."));
   } else {
     c.append(el("p", "sub", "Newest first — which is the reverse of the direction the hashes link, so each row's <code>prev</code> is the <code>hash</code> of the row below it."));
     const t = el("table");
@@ -65,11 +65,11 @@ function renderEvidence(box, verify, chain) {
     const tb = el("tbody");
     for (const r of chain) {
       tb.append(el("tr", null,
-        `<td class="num">${r.id}</td>` +
-        `<td class="sub">${(r.created_at || "").slice(0, 19).replace("T", " ")}</td>` +
-        `<td>${r.actor}</td><td>${r.action}</td>` +
-        `<td><code>${(r.prev_hash || "—").slice(0, 10)}</code></td>` +
-        `<td><code>${(r.hash || "").slice(0, 10)}</code></td>`));
+        `<td class="num">${esc(r.id)}</td>` +
+        `<td class="sub">${esc((r.created_at || "").slice(0, 19).replace("T", " "))}</td>` +
+        `<td>${esc(r.actor)}</td><td>${esc(r.action)}</td>` +
+        `<td><code>${esc((r.prev_hash || "—").slice(0, 10))}</code></td>` +
+        `<td><code>${esc((r.hash || "").slice(0, 10))}</code></td>`));
     }
     t.append(tb);
     c.append(t);
