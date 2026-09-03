@@ -38,6 +38,7 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --rail: 232px;
+  --topbar: 52px;
   --measure: 68ch;         /* prose never runs wider than this */
 }
 
@@ -96,28 +97,61 @@ body {
 h1, h2, h3 { letter-spacing: -0.015em; }
 
 /* =====================================================================
-   Rail — identity, wayfinding, scope
+   Chrome — top bar and rail
    ===================================================================== */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar); z-index: 40;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1.5rem; padding: 0 1.1rem;
+  background: var(--surface); border-bottom: 1px solid var(--hair);
+}
+.brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.brand .wordmark b { display: block; font-size: 0.92rem; font-weight: 700; line-height: 1.15; }
+.brand .wordmark em {
+  display: block; font-style: normal; font-size: 0.7rem;
+  color: var(--ink-mut); line-height: 1.2;
+}
+.topbar-tools { display: flex; align-items: center; gap: 1.1rem; }
+.field.inline { display: flex; align-items: center; gap: 0.5rem; }
+.field.inline span {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--ink-mut);
+}
+.field.inline select {
+  font: inherit; font-size: 0.82rem; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--hair-strong);
+  border-radius: 6px; padding: 0.28rem 0.5rem; min-width: 12rem;
+}
+.stamp { display: flex; align-items: baseline; gap: 0.4rem; font-family: var(--mono); font-size: 0.72rem; }
+.stamp-label { color: var(--ink-mut); }
+.live { display: flex; align-items: center; gap: 0.35rem;
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ink-mut); }
+.live i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--good);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 18%, transparent);
+}
+
 .rail {
-  position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30;
-  display: flex; flex-direction: column;
-  padding: 1.4rem 1.1rem 1.1rem;
+  position: fixed; inset: var(--topbar) auto 0 0; width: var(--rail); z-index: 30;
+  display: flex; flex-direction: column; overflow-y: auto;
+  padding: 1.1rem 1.1rem 1.5rem;
   border-right: 1px solid var(--hair);
   background: var(--paper);
 }
-.rail-brand { display: flex; gap: 0.65rem; align-items: flex-start; }
-.mark {
-  flex: none; width: 32px; height: 32px; border-radius: 7px;
-  display: grid; place-items: center;
-  background: var(--ink); color: var(--paper);
+.rail-group {
+  margin: 1.35rem 0 0.45rem; font-size: 0.62rem; font-weight: 650;
+  text-transform: uppercase; letter-spacing: 0.11em; color: var(--ink-mut);
 }
-.wordmark b { display: block; font-size: 0.98rem; font-weight: 700; line-height: 1.2; }
-.wordmark em {
-  display: block; font-style: normal; font-size: 0.73rem;
-  color: var(--ink-mut); line-height: 1.35; margin-top: 2px;
+.rail-group:first-child { margin-top: 0; }
+.badge {
+  margin-left: auto; font-family: var(--mono); font-size: 0.68rem;
+  background: var(--warn); color: #fff; border-radius: 9px;
+  padding: 0.02rem 0.36rem; line-height: 1.5;
 }
+.badge[hidden] { display: none; }
 
-.rail-nav { margin-top: 2rem; display: flex; flex-direction: column; gap: 1px; }
+.rail-nav { margin-top: 0; display: flex; flex-direction: column; gap: 1px; }
 .rail-nav a {
   display: flex; align-items: baseline; gap: 0.6rem;
   padding: 0.42rem 0.55rem; border-radius: 6px;
@@ -162,12 +196,24 @@ h1, h2, h3 { letter-spacing: -0.015em; }
    ===================================================================== */
 main {
   margin-left: var(--rail);
+  padding-top: calc(var(--topbar) + 1.6rem);
   max-width: 1180px;
-  padding: 2.4rem 2.6rem 6rem;
+  padding-right: 2.6rem; padding-bottom: 6rem; padding-left: 2.6rem;
 }
 section { padding-top: 2.6rem; }
 section + section { border-top: 1px solid var(--hair); }
 #hero { padding-top: 0; }
+/* A routed view is the only section on screen. It is still `section + section`
+   in the document, so without this it opens on an orphaned rule and a band of
+   empty space where the previous section used to be. */
+section.solo { padding-top: 0; border-top: 0; }
+
+/* Back-link out of a view reached from another view, not from the rail. */
+.sec-head .back {
+  font-family: var(--mono); font-size: 0.7rem; color: var(--ink-mut);
+  text-decoration: none; border-bottom: 1px solid transparent;
+}
+.sec-head .back:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 .sec-head { display: flex; align-items: baseline; gap: 0.7rem; }
 .sec-head .idx {
@@ -366,7 +412,7 @@ tbody tr:hover { background: var(--inset); }
 }
 .chip:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-mut); }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.chip.on { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+.chip.on, .chip.on:hover { color: var(--paper); background: var(--ink); border-color: var(--ink); }
 .chip.on .count { color: var(--paper); opacity: 0.7; }
 .chip:disabled { opacity: 0.4; cursor: default; }
 .chip .count { color: var(--ink-mut); font-weight: 500; font-family: var(--mono); font-size: 0.72rem; }
@@ -380,9 +426,152 @@ tbody tr:hover { background: var(--inset); }
   color: var(--ink-mut); font-weight: 500; font-size: 0.72rem; font-family: var(--mono);
 }
 
+/* Secondary line inside a panel. `.sub` was only ever styled under `.tile`, so
+   every panel that used it — the case dossier, the audit rows — was rendering
+   its footnotes at full body size. */
+.panel .sub, .panel p.sub {
+  font-size: 0.78rem; color: var(--ink-mut); margin: 0.3rem 0 0.7rem;
+  max-width: var(--measure);
+}
+.panel code {
+  font-family: var(--mono); font-size: 0.76rem;
+  background: var(--inset); border-radius: 4px; padding: 0.05rem 0.3rem;
+}
+.verdict {
+  margin: 0.1rem 0 0; font-size: 0.94rem; line-height: 1.5;
+  max-width: var(--measure);
+}
+.verdict.ok b { color: var(--good); }
+.verdict.bad { color: var(--bad); font-weight: 600; }
+.panel table { margin-top: 0.6rem; }
+
+/* Case filters: presets first because one click answers the question most
+   people arrive with, exact facets underneath for the ones who want a column. */
+.case-controls { margin-bottom: 1.1rem; }
+.case-facets { display: flex; gap: 1.1rem; flex-wrap: wrap; align-items: flex-end; }
+.case-facets .field span {
+  display: block; font-size: 0.66rem; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--ink-mut); margin-bottom: 0.25rem;
+}
+.case-facets select {
+  font: inherit; font-size: 0.82rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--hair-strong);
+  border-radius: 6px; padding: 0.32rem 0.5rem; min-width: 11rem;
+}
+.case-facets select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+td a code { color: var(--accent); background: none; padding: 0; }
+td a { text-decoration: none; }
+td a:hover code { text-decoration: underline; }
+
 /* =====================================================================
-   Responsive — the rail becomes a top bar
+   Approvals — the one view that acts
    ===================================================================== */
+.queue-head {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  border: 1px solid var(--hair); border-radius: 10px;
+  background: var(--surface); margin-bottom: 1rem;
+}
+.queue-head .tile { padding: 0.9rem 1.1rem; border-right: 1px solid var(--hair); }
+.queue-head .tile:last-child { border-right: 0; }
+
+.field.approver { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.2rem; }
+.field.approver > span:first-child {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--ink-mut);
+}
+.field.approver input {
+  font: inherit; font-size: 0.84rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--hair-strong);
+  border-radius: 6px; padding: 0.3rem 0.55rem; min-width: 16rem;
+}
+.approver-note { font-size: 0.74rem; color: var(--ink-mut); }
+
+.approval {
+  border: 1px solid var(--hair); border-left: 3px solid var(--warn);
+  border-radius: 10px; background: var(--surface);
+  padding: 1rem 1.15rem; margin-bottom: 0.75rem;
+}
+.approval.done    { border-left-color: var(--good); opacity: 0.72; }
+.approval.refused { border-left-color: var(--bad); }
+
+.approval-top { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+.approval-money {
+  font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.approval-who b { font-size: 0.9rem; }
+.approval-who .sub { display: block; font-size: 0.76rem; color: var(--ink-mut); }
+
+.approval-prop { margin-top: 0.7rem; font-size: 0.88rem; }
+.approval-prop .lbl {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--ink-mut); margin-right: 0.4rem;
+}
+.approval-prop .pos { color: var(--good); }
+.approval-reason {
+  margin: 0.45rem 0 0; font-size: 0.82rem; color: var(--ink-2);
+  max-width: var(--measure);
+}
+.approval-rule {
+  margin-top: 0.5rem; font-size: 0.8rem; color: var(--ink-2);
+  display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
+}
+.approval-rule code {
+  font-family: var(--mono); font-size: 0.74rem;
+  background: var(--inset); border-radius: 4px; padding: 0.05rem 0.3rem;
+}
+.approval-alts { margin-top: 0.6rem; }
+.approval-alts summary {
+  cursor: pointer; font-size: 0.78rem; color: var(--ink-mut);
+  list-style: none;
+}
+.approval-alts summary::before { content: "▸ "; }
+.approval-alts[open] summary::before { content: "▾ "; }
+.approval-alts .rejected {
+  font-size: 0.78rem; color: var(--ink-mut); margin: 0.3rem 0 0 1rem;
+}
+.approval-alts .rejected code {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--bad);
+}
+
+.approval-actions {
+  display: flex; align-items: center; gap: 0.55rem;
+  margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--hair);
+  flex-wrap: wrap;
+}
+.btn {
+  font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--hair-strong); background: var(--surface);
+  color: var(--ink); border-radius: 7px; padding: 0.35rem 0.9rem;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.btn:hover:not(:disabled) { border-color: var(--ink-mut); }
+.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.primary:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.approval-status { font-size: 0.8rem; color: var(--ink-mut); }
+.approval-status.ok  { color: var(--good); }
+.approval-status.bad { color: var(--bad); }
+
+/* ---- Source captions ---- */
+.caption {
+  font-family: var(--mono); font-size: 0.66rem;
+  color: var(--ink-mut); background: var(--inset);
+  padding: 0.1rem 0.35rem; border-radius: 3px;
+  letter-spacing: 0.02em; vertical-align: middle;
+}
+
+/* ---- Dossier ---- */
+.dossier-header { margin-bottom: 1rem; }
+.dossier-title { font-size: 1rem; font-weight: 700; }
+.dossier-sub { font-size: 0.85rem; color: var(--ink-2); margin-top: 0.25rem; }
+.dossier-section { margin: 1rem 0; }
+.rejected-list .rejected { margin-top: 0.15rem; }
+
+/* =====================================================================
+    Responsive — the rail becomes a top bar
+    ===================================================================== */
 @media (max-width: 1080px) {
   .rail {
     position: static; width: auto; border-right: 0;
