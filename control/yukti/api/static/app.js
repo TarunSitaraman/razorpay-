@@ -302,6 +302,11 @@ function initNav() {
     let current = sections[0];
     for (const s of sections) {
       const r = s.getBoundingClientRect();
+      // A routed section that is not the current view is display:none, so its
+      // rect is all zeros — top 0 passes the reading-line test and the loop
+      // would elect the last hidden one, which is how the rail came to say
+      // "Evidence" while the reader was halfway down Today.
+      if (r.height === 0) continue;
       if (r.top <= line && r.bottom > line) { current = s; break; }
       if (r.top <= line) current = s;
     }
