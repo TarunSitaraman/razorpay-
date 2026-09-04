@@ -109,6 +109,14 @@ class PlanResult:
     stop_breakdown: dict[str, int] = field(default_factory=dict)
     not_chased_paise: int = 0
     optimality_ratio: float = 1.0
+    # The solve's own numbers. Until these were carried out of `allocate()`, the
+    # shadow prices reached the database only as interpolated text inside a
+    # suppression reason -- so the one quantity a merchant can act on ("another
+    # contact is worth this much to you") was unreadable by anything.
+    lambda_contact: float = 0.0
+    lambda_discount: float = 0.0
+    dual_bound_paise: int = 0
+    alloc_candidates: int = 0
 
     def summary(self) -> str:
         return (
@@ -243,6 +251,10 @@ def plan_cycle(
     ))
     result.optimality_ratio = allocation.optimality_ratio
     result.planned_margin_paise = allocation.planned_margin_paise
+    result.lambda_contact = allocation.lambda_contact
+    result.lambda_discount = allocation.lambda_discount
+    result.dual_bound_paise = allocation.dual_bound_paise
+    result.alloc_candidates = len(alloc_candidates)
 
     chosen = {
         c.case_id: index[(c.case_id, c.action_kind, c.channel,
@@ -298,7 +310,12 @@ def plan_cycle(
                          "discount_paise": result.discount_spent_paise,
                          "optimality_ratio": round(result.optimality_ratio, 4),
                          "agent_filtered": result.agent_filtered,
-                         "agent_degraded": result.agent_degraded})
+                         "agent_degraded": result.agent_degraded,
+                         "lambda_contact": round(result.lambda_contact, 2),
+                         "lambda_discount": round(result.lambda_discount, 6),
+                         "dual_bound_paise": result.dual_bound_paise,
+                         "planned_margin_paise": result.planned_margin_paise,
+                         "candidates": result.alloc_candidates})
     _close_run(conn, rid, "completed")
     conn.commit()
     return result

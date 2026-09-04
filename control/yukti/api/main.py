@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import psycopg_pool
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,8 @@ pool: psycopg_pool.ConnectionPool | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
+    from dotenv import load_dotenv
+    load_dotenv()
     from psycopg.rows import dict_row
 
     pool = psycopg_pool.ConnectionPool(
@@ -237,9 +239,230 @@ def not_chased(merchant_id: str | None = Query(None)) -> dict:
 
 @app.get("/cases")
 def cases(
-    merchant_id: str | None = Query(None), limit: int = Query(50, le=500)
+    merchant_id: str | None = Query(None),
+    limit: int = Query(50, le=500),
+    state: str | None = Query(None),
+    arm: str | None = Query(None),
+    stop_reason: str | None = Query(
+        None, description="a rule id, or `stopped` for any named reason"
+    ),
 ) -> list[dict]:
-    rows = _q(queries.recent_cases, merchant_id, limit)
+    from yukti.domain import decline
+
+    rows = _q(queries.recent_cases, merchant_id, limit, state, arm, stop_reason)
     for r in rows:
         r["display"] = format_inr(r["amount_paise"])
+        # Enriched here rather than joined in SQL, and for the same reason the
+        # case file does it: the decline catalogue is a property of the code.
+        # Without it the list leaks "AP12" and "AP39" onto a merchant's screen,
+        # which is the exact thing the console's translation layer exists to stop.
+        if r.get("decline_code"):
+            r["decline_label"] = decline.lookup(r["decline_code"]).label
     return rows
+
+
+@app.get("/cases/facets")
+def case_facets(merchant_id: str | None = Query(None)) -> dict:
+    """Which filter values exist in this book, with counts.
+
+    Declared before `/cases/{case_id}` because FastAPI matches routes in order
+    and `facets` would otherwise be read as a case id.
+    """
+    return _q(queries.case_facets, merchant_id)
+
+
+@app.get("/cases/{case_id}")
+def case_file(case_id: str) -> dict[str, Any]:
+    """One case, from the failed payment to the hash that recorded the decision.
+
+    The console's aggregates answer "what happened across the book". This
+    answers "why this customer, and on whose authority" — which is the question
+    a merchant actually asks, and the one no amount of aggregate reporting can
+    be made to answer.
+
+    Assembled from eight keyed reads rather than a join, and enriched here
+    rather than in SQL: the decline catalogue, the full rule legend and the
+    leakage guard are properties of the code, not of the row.
+    """
+    from yukti.domain import decline
+    from yukti.intelligence.features import FORBIDDEN
+    from yukti.policy.engine import all_rule_ids
+
+    spine = _q(queries.case_spine, case_id)
+    if spine is None:
+        raise HTTPException(404, f"no such case: {case_id}")
+
+    attempts = _q(queries.case_attempts, spine["obligation_id"])
+    for a in attempts:
+        spec = decline.lookup(a["decline_code"])
+        # Why a later rule was entitled to stop this case: the attempt cap and
+        # the transience verdict both come from here, not from the planner.
+        a["decline"] = {
+            "label": spec.label,
+            "transience": spec.transience.value,
+            "retryable_silently": spec.retryable_silently,
+            "customer_actionable": spec.customer_actionable,
+            "max_attempts": spec.max_attempts,
+            "min_retry_gap_h": spec.min_retry_gap_h,
+        }
+        a["display"] = format_inr(a["amount_paise"])
+        a["ours"] = a["caused_by_action_id"] is not None
+
+    decisions = _q(queries.case_decisions, case_id)
+    evaluations = _q(queries.case_policy_evaluations, [d["id"] for d in decisions])
+    by_decision: dict[str, list[dict]] = {}
+    for e in evaluations:
+        by_decision.setdefault(e["decision_id"], []).append(e)
+
+    legend = all_rule_ids()
+    for d in decisions:
+        d["display"] = format_inr(d["expected_incr_margin_paise"] or 0)
+        ran = by_decision.get(d["id"], [])
+        d["policy_evaluations"] = ran
+        # Rules that did not run are reported as such. Their silent absence
+        # reads as "this check does not exist", which is a worse claim than
+        # "it did not apply here".
+        seen = {e["rule_id"] for e in ran}
+        d["rules_not_applicable"] = sorted(
+            rid for rules in legend.values() for rid in rules if rid not in seen
+        )
+        alts = d.get("alternatives_rejected") or []
+        d["alternatives_shown"] = len(alts)
+
+    actions = _q(queries.case_actions, case_id)
+    for a in actions:
+        a["cost_display"] = format_inr(a["cost_paise"] or 0)
+        a["discount_display"] = format_inr(a["discount_paise"] or 0)
+
+    outcomes = _q(queries.case_outcomes, case_id)
+    for o in outcomes:
+        o["display"] = format_inr(o["recovered_paise"] or 0)
+        o["organic"] = o["action_id"] is None
+
+    audit_rows = _q(
+        queries.case_audit, spine["merchant_id"],
+        [case_id, spine["obligation_id"]],
+        [d["trace_id"] for d in decisions if d["trace_id"]],
+    )
+
+    return {
+        "case": spine,
+        "display": format_inr(spine["amount_paise"]),
+        "attempts": attempts,
+        "collisions": _q(queries.case_collisions,
+                         spine["customer_id"], spine["obligation_id"]),
+        "promises": _q(queries.case_promises, spine["obligation_id"]),
+        "decisions": decisions,
+        "actions": actions,
+        "outcomes": outcomes,
+        "audit": audit_rows,
+        # Ground truth the models are structurally forbidden from reading. Sent
+        # separately from the customer's servable features so the console cannot
+        # accidentally present it as one of them.
+        "ground_truth": {
+            "archetype": spine.pop("archetype", None),
+            "withheld_from_models": sorted(FORBIDDEN),
+            "enforced_by": "yukti.intelligence.features.FeatureLeakage",
+        },
+    }
+
+
+@app.get("/cycles")
+def cycles(
+    merchant_id: str | None = Query(None), limit: int = Query(50, le=200)
+) -> list[dict]:
+    """Completed planning runs, read back out of the audit chain.
+
+    The shadow prices are the reason this panel exists: `lambda_contact` is what
+    one more contact would have to be worth before the allocator would fund it,
+    and it is the only number here a merchant can act on directly.
+    """
+    rows = _q(queries.planning_cycles, merchant_id, limit)
+    for r in rows:
+        r["dual_bound_display"] = format_inr(r["dual_bound_paise"] or 0)
+        r["planned_margin_display"] = format_inr(r["planned_margin_paise"] or 0)
+        r["discount_display"] = format_inr(r["discount_paise"] or 0)
+    return rows
+
+
+@app.get("/audit/verify")
+def audit_verify() -> dict[str, Any]:
+    """Re-walk every merchant's hash chain and report what did not verify.
+
+    Recomputed on request rather than cached. A cached "chain intact" is an
+    assertion about a past state of the table, which is precisely the claim this
+    endpoint exists to refuse to make.
+    """
+    from yukti import audit
+
+    statuses = _q(audit.verify_all)
+    chains = [
+        {
+            "merchant_id": s.merchant_id,
+            "rows": s.rows,
+            "intact": s.intact,
+            "broken_at": s.broken_at,
+            "reason": s.reason,
+        }
+        for s in statuses
+    ]
+    return {
+        "intact": all(c["intact"] for c in chains),
+        "chains": chains,
+        "rows": sum(c["rows"] for c in chains),
+        "merchants": len(chains),
+    }
+
+
+@app.get("/audit/chain")
+def audit_chain(
+    merchant_id: str | None = Query(None), limit: int = Query(20, le=100)
+) -> list[dict]:
+    return _q(queries.audit_tip, merchant_id, limit)
+
+
+@app.get("/approvals")
+def approvals(merchant_id: str | None = Query(None)) -> list[dict]:
+    """What is waiting on a human, most money first.
+
+    The only queue in the console that is not reporting: each row is an action
+    the system decided was right but is not permitted to send on its own
+    authority.
+    """
+    rows = _q(queries.approval_queue, merchant_id)
+    for r in rows:
+        r["display"] = format_inr(r["amount_paise"])
+        r["margin_display"] = format_inr(r["expected_incr_margin_paise"] or 0)
+    return rows
+
+
+@app.post("/approvals/{case_id}")
+def decide_approval(
+    case_id: str,
+    verdict: str = Body(..., embed=True),
+    actor: str = Body(..., embed=True),
+    note: str = Body("", embed=True),
+) -> dict[str, Any]:
+    """Approve or reject one escalated case.
+
+    The write itself lives in `yukti.approvals`, not here. This handler does
+    transport and nothing else: it cannot dispatch, and it has no way to skip
+    the policy re-evaluation, because it does not know how to.
+    """
+    from yukti import approvals
+
+    assert pool is not None
+    with pool.connection() as conn:
+        try:
+            d = approvals.decide(conn, case_id, verdict, actor, note)
+        except approvals.ApprovalError as exc:
+            # 409, not 400: the request was well-formed and the reviewer is
+            # entitled to make it. The conflict is with the world -- a rule that
+            # now forbids the action -- and the rules are returned so the
+            # console can say which.
+            raise HTTPException(409, detail={"message": exc.message,
+                                             "rules": exc.rules}) from exc
+    return {
+        "case_id": d.case_id, "decision_id": d.decision_id,
+        "verdict": d.verdict, "dispatched": d.dispatched, "detail": d.detail,
+    }

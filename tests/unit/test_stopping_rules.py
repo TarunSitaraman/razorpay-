@@ -208,8 +208,16 @@ class TestCoverage:
             if d.stop:
                 produced.add(d.reason)
 
-        assert produced == set(StopReason), (
-            f"unreachable stop reasons: {set(StopReason) - produced}"
+        # Reasons a human produces rather than a rule. Named individually, and
+        # subtracted rather than skipped, so a reason that no code path at all
+        # can reach still fails this test. HUMAN_REJECTED is written by
+        # `yukti.approvals.decide` and covered by
+        # tests/integration/test_approvals_api.py.
+        BY_A_HUMAN = {StopReason.HUMAN_REJECTED}
+
+        assert produced == set(StopReason) - BY_A_HUMAN, (
+            f"unreachable stop reasons: "
+            f"{set(StopReason) - BY_A_HUMAN - produced}"
         )
 
     def test_rule_ids_match_the_enum(self):

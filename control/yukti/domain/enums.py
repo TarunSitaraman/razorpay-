@@ -170,6 +170,10 @@ class StopReason(StrEnum):
     DIMINISHING_RETURNS = "diminishing_returns"        # past the recovery-curve knee
     NEGATIVE_EXPECTED_MARGIN = "negative_expected_margin"
     OBLIGATION_RESOLVED = "obligation_resolved"
+    # A reviewer declined the escalated proposal. Named like every other
+    # stop so the console groups it and the schema's "stopped implies a
+    # reason" constraint is satisfied by a real rule rather than a string.
+    HUMAN_REJECTED = "human_rejected"
 
 
 class PolicyVerdict(StrEnum):

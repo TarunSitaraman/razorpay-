@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from yukti.domain.money import format_inr
 from yukti.domain.enums import ActionKind, Channel, PolicyVerdict
 from yukti.policy.regpack import ActionRequest, RuleResult, _allow
 
@@ -53,6 +54,13 @@ class MerchantContext:
 
     contacts_this_week: int = 0
     had_recent_discount: bool = False
+    # A named human has authorised this specific action. Only the approval
+    # threshold consults it, and only to supply the one thing that rule says is
+    # missing -- authority. Every other rule, regulatory rules above all, runs
+    # unchanged and can still block, so approving cannot make an illegal action
+    # legal. This is what lets an approval re-enter the policy engine rather
+    # than route around it.
+    human_approved: bool = False
 
 
 def contact_cap(r: ActionRequest, p: MerchantPolicy, ctx: MerchantContext) -> RuleResult:
@@ -137,10 +145,19 @@ def approval_threshold(r: ActionRequest, p: MerchantPolicy, ctx: MerchantContext
     if r.action_kind is ActionKind.SUPPRESS:
         return _allow(rule)
     if r.amount_paise >= p.approval_threshold_paise:
+        if ctx.human_approved:
+            # The escalation asked for authority and authority arrived. The
+            # amount is unchanged and still above the threshold; what changed is
+            # that someone accountable said yes, which is recorded against them.
+            return _allow(rule)
+        # Rupees, not paise. This string is not internal: it is what the
+        # approvals queue shows the person being asked to authorise the action,
+        # and "amount 39712659" is not a number anyone can sanity-check.
         return RuleResult(
             rule, PolicyVerdict.ESCALATE,
-            f"amount {r.amount_paise} is at or above the merchant approval "
-            f"threshold {p.approval_threshold_paise}; holding for review",
+            f"amount {format_inr(r.amount_paise)} is at or above the merchant "
+            f"approval threshold {format_inr(p.approval_threshold_paise)}; "
+            f"holding for review",
         )
     return _allow(rule)
 

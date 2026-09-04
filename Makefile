@@ -5,10 +5,33 @@
 # docker-compose.yml is kept in sync for machines that do have one.
 
 SHELL := /bin/bash
+
+# Windows consoles select cp1252, which cannot encode the rupee sign. Every
+# command here prints money and each computes FIRST, so the failure lands after
+# all the work as a UnicodeEncodeError in the renderer — `make eval` spent 931s
+# on six arms and then died printing the headline. UTF-8 mode is set for every
+# recipe rather than per command, because rich writes through its own Windows
+# console path that a `sys.stdout.reconfigure` in one module does not cover.
+export PYTHONUTF8 := 1
 .DEFAULT_GOAL := help
 VENV := .venv
-PY := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
+# A virtualenv puts its executables in bin/ on POSIX and Scripts/ on Windows.
+# Hardcoding bin/ meant every target that runs Python — migrate, seed, plan,
+# eval, test — failed on a Windows checkout even once make itself was present,
+# so `make demo` could not complete there. Same fix as scripts/local/env.sh.
+#
+# Chosen by platform rather than by probing for the directory, and assigned with
+# `=` rather than `:=`. On a cold clone `install` runs before any virtualenv
+# exists, so a probe evaluated at parse time finds nothing and silently falls
+# back to the POSIX layout — which is the failure this is meant to prevent. The
+# probe survives only as an override for a Windows venv built under MSYS, which
+# does use bin/.
+ifeq ($(OS),Windows_NT)
+VENV_BIN = $(if $(wildcard $(VENV)/bin/python*),$(VENV)/bin,$(VENV)/Scripts)
+else
+VENV_BIN = $(VENV)/bin
+endif
+PY  := $(VENV_BIN)/python
 
 .PHONY: help up down status reset venv install migrate seed history replay replay-fast train plan replay-webhooks edge services services-down outbox eval sensitivity demo test lint fmt clean audit seed-policy
 
@@ -35,11 +58,14 @@ reset: services-down ## Wipe Kafka data, flush Redis, drop+recreate the database
 	@./scripts/local/stack.sh reset
 
 venv: ## Create the Python virtualenv
-	@test -d $(VENV) || python3 -m venv $(VENV)
+	@test -d $(VENV) || { python3 -m venv $(VENV) 2>/dev/null || python -m venv $(VENV); }
 
+# `python -m pip`, not the pip shim: on Windows pip.exe holds a lock on itself
+# and refuses to self-upgrade with "To modify pip, please run ...", which fails
+# `make install` and so `make demo` on a cold clone.
 install: venv ## Install Python dependencies
-	@$(PIP) install -q --upgrade pip
-	@$(PIP) install -q -e ".[dev]"
+	@$(PY) -m pip install -q --upgrade pip
+	@$(PY) -m pip install -q -e ".[dev]"
 	@echo "  ok   python deps installed"
 
 migrate: ## Apply database migrations
@@ -150,14 +176,14 @@ demo: up install migrate seed history replay-fast consume train seed-policy serv
 #               is what /metrics/lift serves
 
 test: ## Run the test suite
-	@$(VENV)/bin/pytest -q
+	@$(VENV_BIN)/pytest -q
 
 lint: ## Lint and type-check
-	@$(VENV)/bin/ruff check control datagen sandbox tests
+	@$(VENV_BIN)/ruff check control datagen sandbox tests
 	@cd edge && go vet ./... 2>/dev/null || true
 
 fmt: ## Format
-	@$(VENV)/bin/ruff format control datagen sandbox tests
+	@$(VENV_BIN)/ruff format control datagen sandbox tests
 	@cd edge && go fmt ./... 2>/dev/null || true
 
 clean: ## Remove venv and generated data

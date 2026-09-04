@@ -39,9 +39,9 @@ case "${1:-up}" in
     export PYTHONPATH="${YUKTI_ROOT}/control:${YUKTI_ROOT}/datagen:${YUKTI_ROOT}/sandbox"
     export YUKTI_WEBHOOK_SECRET="${YUKTI_WEBHOOK_SECRET:-yukti_dev_webhook_secret}"
     start_one ingest-gw 9100 "${YUKTI_ROOT}/edge/bin/ingest-gw"
-    start_one sandbox   8081 "${YUKTI_ROOT}/.venv/bin/python" -m uvicorn \
+    start_one sandbox   8081 "${YUKTI_PY}" -m uvicorn \
       yukti_sandbox.app:app --host 127.0.0.1 --port 8081
-    start_one api       8080 "${YUKTI_ROOT}/.venv/bin/python" -m uvicorn \
+    start_one api       8080 "${YUKTI_PY}" -m uvicorn \
       yukti.api.main:app --host 127.0.0.1 --port 8080
     ;;
   down) for s in api sandbox ingest-gw; do stop_one "$s"; done ;;

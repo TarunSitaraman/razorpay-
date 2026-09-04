@@ -51,6 +51,21 @@ class FakeClient:
         return self.answer, {"input": 1, "output": 1}, "fake-model"
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_provider_keys(monkeypatch):
+    """Every test here reasons about a provider's *configured* state.
+
+    Since the API and CLI started calling `load_dotenv()`, a developer with a
+    real key in `.env` has it in their process environment, and the two tests
+    that assert "no key" read the developer's own credentials instead — green in
+    CI, red on the machine about to give the demo. The keys are cleared here so
+    the suite tests the code rather than the machine it runs on.
+    """
+    for spec in BY_NAME.values():
+        for var in spec.key_env:
+            monkeypatch.delenv(var, raising=False)
+
+
 def _chain(tmpdir, providers: dict[str, FakeClient], order: list[str]):
     chain = LayeredClient(order=order, cache=_cache(tmpdir))
     chain._clients = dict(providers)
