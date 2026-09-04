@@ -43,3 +43,9 @@ artifacts/
 test_output.txt
 test_results.txt
 testcount.txt
+
+# Local caches and assistant scratch — never part of the project.
+.hypothesis/
+.claude-flow/
+.remember/
+.claude/
